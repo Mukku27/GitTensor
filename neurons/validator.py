@@ -9,6 +9,7 @@ from pathlib import Path
 from gittensor.base.validator import BaseValidatorNeuron
 from gittensor.protocol import GitOpSynapse,AVAILABLE_OPERATIONS
 from gittensor.utils.uids import get_random_uids 
+import typing
 
 # A small helper to manage test repository state for the validator
 class TestRepo:

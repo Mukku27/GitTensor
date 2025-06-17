@@ -7,6 +7,7 @@ import bittensor as bt
 from pathlib import Path
 import json
 import traceback
+import typing
 
 from gittensor.base.miner import BaseMinerNeuron
 from gittensor.protocol import GitOpSynapse, AVAILABLE_OPERATIONS
