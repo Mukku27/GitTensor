@@ -136,6 +136,30 @@ def add_miner_args(cls, parser):
     """Add miner specific arguments to the parser."""
 
     parser.add_argument(
+        "--neuron.rad_alias_miner",
+        type=str,
+        default="gittensor-miner-default", # Default alias
+        help="Radicle alias for the miner. Miner will attempt to auth with this alias if it doesn't exist.",
+    )
+    parser.add_argument(
+        "--neuron.miner_repo_base_dir",
+        type=str,
+        default="~/.gittensor/miner_repos",
+        help="Base directory for the miner to store cloned/seeded Radicle repositories.",
+    )
+    parser.add_argument(
+        "--neuron.start_rad_node_auto",
+        action="store_true",
+        default=True, # Attempt to start rad node automatically
+        help="If set, the miner will attempt to start the radicle node daemon if not running.",
+    )
+    parser.add_argument(
+        "--neuron.initialize_rad_identity_auto",
+        action="store_true",
+        default=True, # Attempt to initialize rad identity automatically
+        help="If set, the miner will attempt to 'rad auth' with the specified alias if not found.",
+    )
+    parser.add_argument(
         "--neuron.name",
         type=str,
         help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
@@ -186,6 +210,31 @@ def add_miner_args(cls, parser):
 
 def add_validator_args(cls, parser):
     """Add validator specific arguments to the parser."""
+
+    parser.add_argument(
+        "--neuron.rad_alias_validator",
+        type=str,
+        default="gittensor-validator-default", # Default alias
+        help="Radicle alias for the validator (primarily for inspection and local operations).",
+    )
+    parser.add_argument(
+        "--neuron.validator_repo_base_dir",
+        type=str,
+        default="~/.gittensor/validator_repos",
+        help="Base directory for the validator to manage its test Radicle repositories.",
+    )
+    parser.add_argument(
+        "--neuron.num_test_repos",
+        type=int,
+        default=5,
+        help="Number of unique test repositories the validator will try to maintain/create for testing.",
+    )
+    parser.add_argument(
+        "--neuron.test_repo_prefix",
+        type=str,
+        default="gittensor-val-test-",
+        help="Prefix for repositories created by the validator for testing.",
+    )
 
     parser.add_argument(
         "--neuron.name",
