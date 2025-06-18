@@ -9,6 +9,10 @@ import shutil
 import uuid
 import shlex
 from typing import Tuple, Optional, List
+import asyncio
+import pexpect
+import re
+
 
 from protocol import RadicleSubnetSynapse
 
@@ -40,8 +44,8 @@ class Validator:
         self.setup_bittensor_objects()
         
         # Initialize scores and moving averages
-        self.scores = bt.utils.weight_utils.construct_weights_tensor(self.metagraph.n.item())
-        self.moving_avg_scores = bt.utils.weight_utils.construct_weights_tensor(self.metagraph.n.item())
+        # self.scores = bt.utils.weight_utils.construct_weights_tensor(self.metagraph.n.item())
+        # self.moving_avg_scores = bt.utils.weight_utils.construct_weights_tensor(self.metagraph.n.item())
 
         self.alpha = self.config.validator.alpha # Weight for moving average
         self.query_timeout = 15 # seconds for dendrite queries
@@ -145,22 +149,24 @@ class Validator:
     def create_and_push_radicle_repo(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """Creates a temporary Git repo, initializes it with Radicle, and pushes it."""
         repo_name = f"test-repo-{str(uuid.uuid4())[:8]}"
-        temp_dir = os.path.join("/tmp", repo_name) # Ensure /tmp is writable
-        
+        temp_dir = os.path.join("/tmp", repo_name)  # Use /tmp to isolate each repo
+
         try:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
             os.makedirs(temp_dir)
 
-            # 1. Init git project
+            # 1. Init Git
             run_command("git init", cwd=temp_dir)
-            
+            run_command("git checkout -b main", cwd=temp_dir)
+
             # 2. Add random files
             with open(os.path.join(temp_dir, "file1.py"), "w") as f:
-                f.write(f"# Python test file {random.randint(1,1000)}\nprint('Hello Radicle!')")
+                f.write(f"# Python test file {random.randint(1, 1000)}\nprint('Hello Radicle!')")
+
             with open(os.path.join(temp_dir, "README.md"), "w") as f:
                 f.write(f"# Test Repo\nRandom content: {uuid.uuid4()}")
-            
+
             run_command("git add .", cwd=temp_dir)
             commit_msg = f"Initial commit {time.time()}"
             git_commit_success, _, _ = run_command(f"git commit -m '{commit_msg}'", cwd=temp_dir)
@@ -171,51 +177,62 @@ class Validator:
             # Get commit hash
             _, commit_hash, _ = run_command("git rev-parse HEAD", cwd=temp_dir)
             if not commit_hash:
-                 bt.logging.error("Failed to get commit hash.")
-                 return None, None, "Failed to get commit hash"
+                bt.logging.error("Failed to get commit hash.")
+                return None, None, "Failed to get commit hash"
 
+            # 3. Init Radicle repo with passphrase via pexpect
+            try:
+                bt.logging.debug("Running rad init with passphrase via pexpect.")
+                command = f"rad init --name {repo_name} --description 'Test repo for Bittensor validation' --default-branch main --public"
+                child = pexpect.spawn(command, cwd=temp_dir, encoding="utf-8", timeout=60)
 
-            # 3. Init Radicle project
-            # `rad init` asks for name, description, default branch. Provide them non-interactively.
-            # Using a simpler `rad init` that might use defaults or prompt if not fully automated.
-            # For non-interactive: rad init --name <name> --description <desc> --default-branch <branch>
-            # For now, let's try a simple rad init and see if it works without prompts
-            # or if the environment is set up for non-interactive use.
-            # The project name usually defaults to the directory name.
-            rad_init_success, rad_init_stdout, rad_init_stderr = run_command(
-                f"rad init --name {repo_name} --description 'Test repo for Bittensor validation' --default-branch main --no-confirm",
-                cwd=temp_dir
-            )
-            if not rad_init_success:
-                bt.logging.error(f"Radicle init failed: {rad_init_stderr} {rad_init_stdout}")
-                return None, None, f"Radicle init failed: {rad_init_stderr} {rad_init_stdout}"
-            
-            # Extract RID from `rad init` stdout (it usually prints the RID)
-            # Or get it from `rad .` (rad self for project)
-            time.sleep(1) # give a moment for .rad/id to be written potentially
-            _, rid_stdout, rid_stderr = run_command("rad . id", cwd=temp_dir) # Gets project ID (RID)
+                # Optional logging to stdout
+                # child.logfile = sys.stdout
+
+                passphrase = "<YOUR_RADICAL_PASSPHRASE"  # Replace with your actual passphrase
+
+                index = child.expect([
+                    re.compile(r'(?i)passphrase.*:', re.IGNORECASE),
+                    pexpect.EOF,
+                    pexpect.TIMEOUT
+                ])
+
+                if index == 0:
+                    child.sendline(passphrase)
+                    child.expect(pexpect.EOF)
+                    output = child.before
+                    bt.logging.debug(f"Radicle init output (with passphrase): {output}")
+                elif index == 1:
+                    # No passphrase prompt; likely already unlocked
+                    bt.logging.warning("Passphrase prompt not shown — identity might be already unlocked.")
+                    output = child.before
+                    bt.logging.debug(f"Radicle init output (no passphrase): {output}")
+                else:
+                    raise Exception("Timeout while waiting for rad init to prompt passphrase or complete.")
+
+            except pexpect.exceptions.ExceptionPexpect as e:
+                bt.logging.error(f"Radicle init via pexpect failed: {str(e)}")
+                return None, None, f"Radicle init failed: {str(e)}"
+
+            # 4. Get RID
+            time.sleep(1)
+            _, rid_stdout, _ = run_command("rad inspect --rid", cwd=temp_dir)
+            bt.logging.debug(f"Radicle inspect output: {rid_stdout}")
             repo_rid = rid_stdout.strip()
             if not repo_rid.startswith("rad:"):
-                 bt.logging.error(f"Failed to get Radicle RID. stdout: '{rid_stdout}', stderr: '{rid_stderr}'")
-                 return None, None, f"Failed to get Radicle RID: {rid_stderr}"
+                bt.logging.error(f"Failed to get Radicle RID. stdout: '{rid_stdout}'")
+                return None, None, f"Failed to get Radicle RID"
+
             bt.logging.info(f"Radicle project initialized. RID: {repo_rid}")
-
-            # 4. Push to network
-            # Assumes miner's seed node is discoverable and configured
-            rad_push_success, rad_push_stdout, rad_push_stderr = run_command("rad push", cwd=temp_dir)
-            if not rad_push_success:
-                bt.logging.error(f"Radicle push failed: {rad_push_stderr} {rad_push_stdout}")
-                return repo_rid, commit_hash, f"Radicle push failed: {rad_push_stderr} {rad_push_stdout}"
-
             bt.logging.info(f"Radicle project pushed successfully: {repo_rid}")
-            return repo_rid, commit_hash, None # RID, commit_hash, error_message
+            return repo_rid, commit_hash, None
 
         except Exception as e:
             bt.logging.error(f"Error in create_and_push_radicle_repo: {e}\n{traceback.format_exc()}")
             return None, None, str(e)
         finally:
             if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir) # Clean up
+                shutil.rmtree(temp_dir)
 
     async def run_sync_loop(self):
         """The main validation loop."""
@@ -226,7 +243,7 @@ class Validator:
                 # --- Step 1: Create a new Radicle repo and push it ---
                 bt.logging.info("Attempting to create and push a new Radicle repository...")
                 repo_rid, commit_hash, push_error = self.create_and_push_radicle_repo()
-
+                bt.logging.debug(f"Repo RID: {repo_rid}, Commit Hash: {commit_hash}, Push Error: {push_error}")
                 if push_error or not repo_rid or not commit_hash:
                     bt.logging.error(f"Failed to create/push Radicle repo: {push_error}. Skipping validation round for this attempt.")
                     # Score miners based on availability / GET_MINER_STATUS if desired, or just wait.
@@ -243,14 +260,14 @@ class Validator:
                     bt.logging.warning("No active miners found to query.")
                     await asyncio.sleep(self.config.subtensor.target_block_time * 2) # Wait for metagraph update
                     continue
-                
+                bt.logging.info(f"Found {len(available_uids)} active miners to query for validation.")
                 # Create Synapse for VALIDATE_PUSH
                 validate_synapse = RadicleSubnetSynapse(
                     operation_type="VALIDATE_PUSH",
                     repo_rid=repo_rid,
                     commit_hash=commit_hash
                 )
-                
+                bt.logging.debug(f"Created validate_synapse: {validate_synapse}")
                 bt.logging.info(f"Querying {len(available_uids)} available miners to validate push of RID {repo_rid}...")
                 
                 # Query axons for VALIDATE_PUSH
@@ -260,6 +277,7 @@ class Validator:
                     synapse=validate_synapse,
                     timeout=self.query_timeout 
                 )
+                bt.logging.info(f"Received {len(validate_responses)} responses for push validation.")
                 
                 current_scores = self.scores.clone() # Work with a copy for this round's scoring
 
