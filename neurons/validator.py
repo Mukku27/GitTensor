@@ -7,7 +7,7 @@ import bittensor as bt
 from pathlib import Path
 
 from gittensor.base.validator import BaseValidatorNeuron
-from gittensor.protocol import GitOpSynapse,AVAILABLE_OPERATIONS
+from gittensor.protocol import gittensor,AVAILABLE_OPERATIONS
 from gittensor.utils.uids import get_random_uids 
 import typing
 
@@ -154,7 +154,7 @@ class Validator(BaseValidatorNeuron):
             operation = random.choice(AVAILABLE_OPERATIONS)
             
             # Prepare the synapse based on the operation
-            synapse = GitOpSynapse(
+            synapse = gittensor(
                 request_id=str(uuid.uuid4()),
                 operation=operation,
                 timestamp=time.time(),

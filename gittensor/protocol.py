@@ -20,7 +20,7 @@ AVAILABLE_OPERATIONS = [
     # Add more specific git/rad operations as needed
 ]
 
-class GitOpSynapse(bt.Synapse):
+class gittensor(bt.Synapse):
     """
     A Synapse for performing Git and Radicle operations.
     It encapsulates the details of the operation to be performed by the miner
@@ -32,7 +32,7 @@ class GitOpSynapse(bt.Synapse):
     operation: str   # The operation to perform, e.g., "clone", "push"
     timestamp: float # Timestamp of the request initiation
 
-    # Optional request fields, depending on the operation
+   
     rid: typing.Optional[str] = None          # Radicle Repository ID
     branch: typing.Optional[str] = None       # Git branch
     commit_hash: typing.Optional[str] = None  # Specific commit hash (e.g., for checkout)
@@ -50,7 +50,7 @@ class GitOpSynapse(bt.Synapse):
     miner_timestamp: typing.Optional[float] = None # Timestamp of the miner's response completion
     error_message: typing.Optional[str] = None # Detailed error message if status is "failure"
 
-    def deserialize(self) -> "GitOpSynapse":
+    def deserialize(self) -> "gittensor":
         """
         Deserialize the miner response.
         No special deserialization logic needed for these basic types if using default bittensor serialization.
@@ -60,7 +60,7 @@ class GitOpSynapse(bt.Synapse):
 
     def __str__(self):
         return (
-            f"GitOpSynapse(request_id={self.request_id}, operation='{self.operation}', "
+            f"gittensor(request_id={self.request_id}, operation='{self.operation}', "
             f"rid='{self.rid}', branch='{self.branch}', status='{self.status}', "
             f"stdout_len={len(self.stdout or '')}, stderr_len={len(self.stderr or '')})"
         )

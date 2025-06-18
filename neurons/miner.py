@@ -10,7 +10,7 @@ import traceback
 import typing
 
 from gittensor.base.miner import BaseMinerNeuron
-from gittensor.protocol import GitOpSynapse, AVAILABLE_OPERATIONS
+from gittensor.protocol import gittensor, AVAILABLE_OPERATIONS
 
 
 class Miner(BaseMinerNeuron):
@@ -151,7 +151,7 @@ class Miner(BaseMinerNeuron):
         safe_name = "".join(c if c.isalnum() or c in ['-', '_'] else '_' for c in rid_or_name)
         return self.repo_base_dir / safe_name
 
-    async def forward(self, synapse: GitOpSynapse) -> GitOpSynapse:
+    async def forward(self, synapse: gittensor) -> gittensor:
         bt.logging.info(f"Miner RX: Op '{synapse.operation}', RID '{synapse.rid}', ReqID '{synapse.request_id}'")
         
         repo_path: typing.Optional[Path] = None
@@ -255,12 +255,12 @@ class Miner(BaseMinerNeuron):
         bt.logging.info(f"Miner TX: Op '{synapse.operation}', RID '{synapse.rid}', Status '{synapse.status}', ReqID '{synapse.request_id}'")
         return synapse
 
-    async def blacklist(self, synapse: GitOpSynapse) -> typing.Tuple[bool, str]:
+    async def blacklist(self, synapse: gittensor) -> typing.Tuple[bool, str]:
         if synapse.operation not in AVAILABLE_OPERATIONS:
             return True, f"Unsupported operation: {synapse.operation}"
         return False, "Allowed" # Basic: allow all known operations
 
-    async def priority(self, synapse: GitOpSynapse) -> float:
+    async def priority(self, synapse: gittensor) -> float:
         return 1.0 # Basic: default priority
 
     def __enter__(self):
