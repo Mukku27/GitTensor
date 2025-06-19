@@ -323,7 +323,7 @@ class Validator:
 
                 # --- Step 4: Validator attempts to clone its own repo (relies on miner seeding) ---
                 # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
-                miner_node_id=synapse.miner_radicle_node_id
+                miner_node_id=resp.miner_radicle_node_id
                 validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid,miner_node_id)
                 if validator_clone_successful:
                     bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
