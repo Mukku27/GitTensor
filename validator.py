@@ -218,7 +218,7 @@ class Validator:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
 
-    def clone_repository_locally(self, repo_rid: str) -> bool:
+    def clone_repository_locally(self, repo_rid: str,miner_node_id:str) -> bool:
         """
         Attempts to clone the given Radicle repository into a temporary local directory.
         Returns True if successful, False otherwise.
@@ -237,10 +237,10 @@ class Validator:
 
         bt.logging.info(f"Validator attempting to clone RID {repo_rid} into its local directory: {clone_target_dir}")
         try:
-            # The command `rad clone <RID> <target_directory>`
+            # The command `rad clone <RID> <target_directory> --seed <NODEID>`
             # We add `--no-confirm` to avoid potential prompts if the identity is already seeding it.
             # And `--no-seed` because the validator isn't intending to become a long-term seeder from this action, just verify cloneability.
-            clone_success_flag, stdout, stderr = run_command(f"rad clone {repo_rid} {clone_target_dir} --no-confirm --no-seed")
+            clone_success_flag, stdout, stderr = run_command(f"rad clone {repo_rid} {clone_target_dir} --no-confirm --seed {miner_node_id} ")
 
             if clone_success_flag and os.path.exists(os.path.join(clone_target_dir, ".git")):
                 bt.logging.info(f"Validator successfully cloned RID {repo_rid} to {clone_target_dir}.")
@@ -290,26 +290,17 @@ class Validator:
                 
                 current_round_scores = torch.zeros_like(self.scores) # Scores for this specific round
 
-                # --- Step 3: Validator attempts to clone its own repo (relies on miner seeding) ---
-                # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
-                validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid)
-                if validator_clone_successful:
-                    bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
-                    # If validator can clone, all available/queried miners get a base score component for this.
-                    # This assumes the network (and thus the miners being queried) made it possible.
-                    for uid in available_uids:
-                         current_round_scores[uid] += 0.5 # Base score for data availability
-                else:
-                    bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
-                    # Miners will not get this part of the score.
+               
 
-                # --- Step 4: Query miners to explicitly VALIDATE THE PUSH (Miner confirms seeding) ---
+                # --- Step 3: Query miners to explicitly VALIDATE THE PUSH (Miner confirms seeding) ---
                 validate_push_synapse = RadicleSubnetSynapse(
                     operation_type="VALIDATE_PUSH",
                     repo_rid=repo_to_validate_rid,
                     commit_hash=commit_hash
                 )
                 bt.logging.info(f"Validator: Querying {len(available_uids)} miners for VALIDATE_PUSH of RID {repo_to_validate_rid}...")
+
+
                 
                 target_axons_validate = [self.metagraph.axons[uid] for uid in available_uids]
                 validate_push_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
@@ -329,6 +320,21 @@ class Validator:
                         bt.logging.warning(f"UID {uid}: Failed VALIDATE_PUSH. Status: {status_code}, Miner Error: '{error_msg}'. Current score for UID: {current_round_scores[uid].item()}")
                     else:
                         bt.logging.warning(f"UID {uid}: No response or transport error for VALIDATE_PUSH. Current score for UID: {current_round_scores[uid].item()}")
+
+                # --- Step 4: Validator attempts to clone its own repo (relies on miner seeding) ---
+                # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
+                miner_node_id=synapse.miner_radicle_node_id
+                validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid,miner_node_id)
+                if validator_clone_successful:
+                    bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
+                    # If validator can clone, all available/queried miners get a base score component for this.
+                    # This assumes the network (and thus the miners being queried) made it possible.
+                    for uid in available_uids:
+                         current_round_scores[uid] += 0.5 # Base score for data availability
+                else:
+                    bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
+                    # Miners will not get this part of the score.
+
                 
                 # --- Step 5: Update moving average scores ---
                 for uid_idx in range(self.metagraph.n.item()):
