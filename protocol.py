@@ -32,6 +32,8 @@ class RadicleSubnetSynapse(bt.Synapse):
     # --- Miner-filled response fields ---
     # For "VALIDATE_PUSH" response
     validation_passed: Optional[bool] = None
+    # For "CLONE_REPO" response
+    clone_success: Optional[bool] = None 
 
     # For "GET_MINER_STATUS" response
     miner_radicle_node_alias: Optional[str] = None
