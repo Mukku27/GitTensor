@@ -256,7 +256,7 @@ class Miner:
             synapse.miner_radicle_node_id = id_stdout if id_success else "N/A"
 
             if synapse.is_miner_radicle_node_running:
-                list_success, list_stdout, _ = run_command("rad seed list")
+                list_success, list_stdout, _ = run_command("rad ls --seeded")
                 if list_success:
                     # Count non-empty lines, as each line is an RID
                     seeded_rids = [line for line in list_stdout.splitlines() if line.strip().startswith("rad:") and len(line.strip()) > 10]

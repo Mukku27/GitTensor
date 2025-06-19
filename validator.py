@@ -178,7 +178,7 @@ class Validator:
                 child = pexpect.spawn(command, cwd=temp_dir, encoding="utf-8", timeout=70)
                 # Optional logging to stdout
                 # child.logfile = sys.stdout
-                passphrase = "<YOUR_RADICAL_PASSPHRASE" # Replace with your actual passphrase
+                passphrase = "<YOUR_RADICAL_PASSPHRASE>" # Replace with your actual passphrase
                 index = child.expect([
                     re.compile(r'(?i)passphrase.*:', re.IGNORECASE),
                     pexpect.EOF,
@@ -321,20 +321,40 @@ class Validator:
                     else:
                         bt.logging.warning(f"UID {uid}: No response or transport error for VALIDATE_PUSH. Current score for UID: {current_round_scores[uid].item()}")
 
-                # --- Step 4: Validator attempts to clone its own repo (relies on miner seeding) ---
-                # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
-                miner_node_id=resp.miner_radicle_node_id
-                validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid,miner_node_id)
-                if validator_clone_successful:
-                    bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
-                    # If validator can clone, all available/queried miners get a base score component for this.
-                    # This assumes the network (and thus the miners being queried) made it possible.
-                    for uid in available_uids:
-                         current_round_scores[uid] += 0.5 # Base score for data availability
-                else:
-                    bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
-                    # Miners will not get this part of the score.
+                # --- Step 4: Validator attempts to get miners status and their node id then clone ---
+                miner_status_synapse = RadicleSubnetSynapse(
+                    operation_type="GET_MINER_STATUS"
+                )
+                bt.logging.info(f"Validator: Querying {len(available_uids)} miners for MINER_STATUS...")
 
+                # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
+                miner_status_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+                    axons=target_axons_validate,
+                    synapse=miner_status_synapse,
+                    timeout=self.query_timeout 
+                )
+
+                bt.logging.info(f"Validator: Received responses for MINER_STATUS from {len(miner_status_responses)} miners.")
+                for i, uid in enumerate(available_uids):
+                    resp = miner_status_responses[i]
+                    if resp and resp.dendrite.status_code == 200 and resp.is_miner_radicle_node_running:
+                        validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid, resp.miner_radicle_node_id)
+                        if validator_clone_successful:
+                            bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
+                            # If validator can clone, all available/queried miners get a base score component for this.
+                            # This assumes the network (and thus the miners being queried) made it possible.
+                            for uid in available_uids:
+                                current_round_scores[uid] += 0.5 # Base score for data availability
+                        else:
+                            bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
+                            # Miners will not get this part of the score.
+                        bt.logging.info(f"UID {uid}: Successfully confirmed MINER_STATUS. Miner Node ID: {resp.miner_radicle_node_id}, Seeded RIDs: {resp.seeded_rids_count}. Current score for UID: {current_round_scores[uid].item()}")
+                    elif resp:
+                        error_msg = resp.error_message or "Miner did not confirm seeding or node is not running."
+                        status_code = resp.dendrite.status_code
+                        bt.logging.warning(f"UID {uid}: Failed to confirm MINER_STATUS. Status: {status_code}, Miner Error: '{error_msg}'. Current score for UID: {current_round_scores[uid].item()}")
+                    else:
+                        bt.logging.warning(f"UID {uid}: No response or transport error for MINER_STATUS. Current score for UID: {current_round_scores[uid].item()}")
                 
                 # --- Step 5: Update moving average scores ---
                 for uid_idx in range(self.metagraph.n.item()):
@@ -374,8 +394,7 @@ class Validator:
                         uids=uids_for_weights, 
                         weights=weights_to_set, 
                         wait_for_inclusion=True, 
-                        wait_for_finalization=False,
-                        version_key = bt.__version_as_int__
+                        wait_for_finalization=False
                     )
                     if success:
                         bt.logging.info(f"Validator: Successfully set weights: {message}")
