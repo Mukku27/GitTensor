@@ -52,11 +52,7 @@ class RadicleSubnetSynapse(bt.Synapse):
     def deserialize(self) -> bytes:
         return self
 
-    # Adding a required_hash_fields for Bittensor Synapse
-    # This helps in ensuring that the Synapse is not tampered with during transit.
-    # For this protocol, let's consider operation_type as essential.
-    # If repo_rid and commit_hash are present, they should also be part of the hash.
-    @property
+    
     def required_hash_fields(self) -> List[str]:
         fields = ["operation_type"]
         # If these fields are part of the request, they should be hashed.
