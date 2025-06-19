@@ -52,7 +52,7 @@ class RadicleSubnetSynapse(bt.Synapse):
     def deserialize(self) -> bytes:
         return self
 
-    
+    @property
     def required_hash_fields(self) -> List[str]:
         fields = ["operation_type"]
         # If these fields are part of the request, they should be hashed.
@@ -62,3 +62,16 @@ class RadicleSubnetSynapse(bt.Synapse):
         if self.commit_hash is not None:
             fields.append("commit_hash")
         return fields
+    
+    @property
+    def body_hash(self) -> str:
+        """
+        Override body_hash to ensure required_hash_fields is accessed correctly.
+        """
+        import hashlib
+        m = hashlib.sha256()
+        for field in self.required_hash_fields: 
+            value = getattr(self, field, None)
+            if value is not None:
+                m.update(str(value).encode('utf-8'))
+        return m.hexdigest()

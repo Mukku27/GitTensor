@@ -12,6 +12,7 @@ from typing import Tuple, Optional, List
 import asyncio
 import pexpect
 import re
+import torch
 
 
 from protocol import RadicleSubnetSynapse
@@ -44,11 +45,10 @@ class Validator:
         self.setup_bittensor_objects()
         
         # Initialize scores and moving averages
-        # self.scores = bt.utils.weight_utils.construct_weights_tensor(self.metagraph.n.item())
-        # self.moving_avg_scores = bt.utils.weight_utils.construct_weights_tensor(self.metagraph.n.item())
-
+        self.scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32)
+        self.moving_avg_scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32)
         self.alpha = self.config.validator.alpha # Weight for moving average
-        self.query_timeout = 15 # seconds for dendrite queries
+        self.query_timeout = 55 # seconds for dendrite queries
         self.steps_passed = 0
 
 
@@ -184,7 +184,7 @@ class Validator:
             try:
                 bt.logging.debug("Running rad init with passphrase via pexpect.")
                 command = f"rad init --name {repo_name} --description 'Test repo for Bittensor validation' --default-branch main --public"
-                child = pexpect.spawn(command, cwd=temp_dir, encoding="utf-8", timeout=60)
+                child = pexpect.spawn(command, cwd=temp_dir, encoding="utf-8", timeout=70)
 
                 # Optional logging to stdout
                 # child.logfile = sys.stdout
@@ -318,7 +318,7 @@ class Validator:
                 # --- Step 5: Set weights on Bittensor network ---
                 # Check if it's time to set weights based on chain tempo
                 current_block = self.subtensor.get_current_block()
-                last_set_weights_block = self.subtensor.get_last_set_weights_block(self.config.netuid, self.my_subnet_uid)
+                last_set_weights_block = self.metagraph.last_update[self.my_subnet_uid].item()
                 tempo = self.subtensor.tempo(self.config.netuid)
 
                 if current_block - last_set_weights_block > tempo :
@@ -335,7 +335,6 @@ class Validator:
                         uids=self.metagraph.uids,
                         weights=weights_to_set,
                         wait_for_inclusion=False, # Faster, but check inclusion separately if needed
-                        version_key=bt.__version_as_int__ # Protocol version
                     )
                     if success:
                         bt.logging.info(f"Successfully set weights: {message}")

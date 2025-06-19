@@ -200,7 +200,7 @@ class Miner:
         
         # Additional blacklist logic can be added here (e.g., based on stake, trust, etc.)
         requester_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
-        if self.metagraph.S[requester_uid] < 1000 : # Example: min stake of 1000 TAO for validators
+        if self.metagraph.S[requester_uid] < 1 : # Example: min stake of 1000 TAO for validators, for testing purposes we use 1
              bt.logging.trace(f"Blacklisting hotkey {synapse.dendrite.hotkey} due to low stake: {self.metagraph.S[requester_uid]}")
              return True, "Low stake"
 
@@ -234,8 +234,7 @@ class Miner:
             
             # Let's check if it's in the seed list
             time.sleep(2) # Give some time for seeding to potentially propagate
-            list_success, list_stdout, list_stderr = run_command("rad seed list")
-
+            list_success, list_stdout, list_stderr = run_command("rad ls --seeded")
             if list_success and synapse.repo_rid in list_stdout:
                 bt.logging.info(f"Successfully verified and seeding RID: {synapse.repo_rid}")
                 synapse.status_message = "SUCCESS"
