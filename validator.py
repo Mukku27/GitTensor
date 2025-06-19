@@ -218,6 +218,48 @@ class Validator:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
 
+    def clone_repository_locally(self, repo_rid: str) -> bool:
+        """
+        Attempts to clone the given Radicle repository into a temporary local directory.
+        Returns True if successful, False otherwise.
+        """
+        if not repo_rid:
+            bt.logging.error("No repo_rid provided for local clone.")
+            return False
+
+        # Create a unique temporary directory for this clone attempt
+        base_clone_dir = "/tmp/validator_clones" # Validator's own temp clone space
+        os.makedirs(base_clone_dir, exist_ok=True)
+        
+        # Sanitize RID for use in path if needed, or use a UUID for the dir name
+        sanitized_rid_for_path = repo_rid.replace(":", "_").replace("/", "_")
+        clone_target_dir = os.path.join(base_clone_dir, f"clone_{sanitized_rid_for_path}_{str(uuid.uuid4())[:8]}")
+
+        bt.logging.info(f"Validator attempting to clone RID {repo_rid} into its local directory: {clone_target_dir}")
+        try:
+            # The command `rad clone <RID> <target_directory>`
+            # We add `--no-confirm` to avoid potential prompts if the identity is already seeding it.
+            # And `--no-seed` because the validator isn't intending to become a long-term seeder from this action, just verify cloneability.
+            clone_success_flag, stdout, stderr = run_command(f"rad clone {repo_rid} {clone_target_dir} --no-confirm --no-seed")
+
+            if clone_success_flag and os.path.exists(os.path.join(clone_target_dir, ".git")):
+                bt.logging.info(f"Validator successfully cloned RID {repo_rid} to {clone_target_dir}.")
+                return True
+            else:
+                bt.logging.warning(f"Validator failed to clone RID {repo_rid}. Success_flag: {clone_success_flag}, Stdout: '{stdout}', Stderr: '{stderr}'")
+                return False
+        except Exception as e:
+            bt.logging.error(f"Exception during validator's local clone operation for {repo_rid}: {e}")
+            return False
+        finally:
+            # Clean up the temporary clone directory
+            if os.path.exists(clone_target_dir):
+                try:
+                    shutil.rmtree(clone_target_dir)
+                    bt.logging.debug(f"Validator successfully removed its temporary clone directory: {clone_target_dir}")
+                except Exception as e:
+                    bt.logging.error(f"Validator error removing its temporary clone directory {clone_target_dir}: {e}")
+
     async def run_sync_loop(self):
         """The main validation loop."""
         bt.logging.info("Starting validator sync loop.")
@@ -225,38 +267,53 @@ class Validator:
         while True:
             try:
                 # --- Step 1: Validator creates a new Radicle repo and pushes it ---
-                bt.logging.info("Attempting to create and push a new Radicle repository...")
-                repo_rid, commit_hash, push_error = self.create_and_push_radicle_repo()
+                # This repo (repo_to_validate_rid) is what miners are expected to seed.
+                bt.logging.info("Validator: Attempting to create and push a new Radicle repository for validation...")
+                repo_to_validate_rid, commit_hash, push_error = self.create_and_push_radicle_repo()
                 
-                if push_error or not repo_rid or not commit_hash:
-                    bt.logging.error(f"Failed to create/push Radicle repo for validation: {push_error}. Skipping validation round.")
-                    await asyncio.sleep(30)  
+                if push_error or not repo_to_validate_rid or not commit_hash:
+                    bt.logging.error(f"Validator: Failed to create/push Radicle repo for validation round: {push_error}. Skipping.")
+                    await asyncio.sleep(30) 
                     continue
                 
-                bt.logging.info(f"Successfully created and pushed test repo. RID: {repo_rid}, Commit: {commit_hash}")
+                bt.logging.info(f"Validator: Successfully created and pushed test repo. RID: {repo_to_validate_rid}, Commit: {commit_hash}")
 
                 # --- Step 2: Identify available miners ---
                 available_uids = [uid for uid in self.metagraph.uids.tolist() if self.metagraph.axons[uid].is_serving]
                 if not available_uids:
-                    bt.logging.warning("No active miners found to query.")
-                    self.metagraph.sync(subtensor=self.subtensor) # Sync to find new miners
-                    await asyncio.sleep(self.config.subtensor.target_block_time * 2 if hasattr(self.config.subtensor, 'target_block_time') else 60)
+                    bt.logging.warning("Validator: No active miners found to query.")
+                    self.metagraph.sync(subtensor=self.subtensor)
+                    await asyncio.sleep(60) # Wait longer if no miners
                     continue
                 
-                bt.logging.info(f"Found {len(available_uids)} active miners to query: {available_uids}")
+                bt.logging.info(f"Validator: Found {len(available_uids)} active miners to query: {available_uids}")
                 
                 current_round_scores = torch.zeros_like(self.scores) # Scores for this specific round
 
-                # --- Step 3: Query miners to VALIDATE THE PUSH (Miner seeds the repo) ---
+                # --- Step 3: Validator attempts to clone its own repo (relies on miner seeding) ---
+                # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
+                validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid)
+                if validator_clone_successful:
+                    bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
+                    # If validator can clone, all available/queried miners get a base score component for this.
+                    # This assumes the network (and thus the miners being queried) made it possible.
+                    for uid in available_uids:
+                         current_round_scores[uid] += 0.5 # Base score for data availability
+                else:
+                    bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
+                    # Miners will not get this part of the score.
+
+                # --- Step 4: Query miners to explicitly VALIDATE THE PUSH (Miner confirms seeding) ---
                 validate_push_synapse = RadicleSubnetSynapse(
                     operation_type="VALIDATE_PUSH",
-                    repo_rid=repo_rid,
+                    repo_rid=repo_to_validate_rid,
                     commit_hash=commit_hash
                 )
-                bt.logging.info(f"Querying {len(available_uids)} miners for VALIDATE_PUSH of RID {repo_rid}...")
+                bt.logging.info(f"Validator: Querying {len(available_uids)} miners for VALIDATE_PUSH of RID {repo_to_validate_rid}...")
                 
+                target_axons_validate = [self.metagraph.axons[uid] for uid in available_uids]
                 validate_push_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
-                    axons=[self.metagraph.axons[uid] for uid in available_uids],
+                    axons=target_axons_validate,
                     synapse=validate_push_synapse,
                     timeout=self.query_timeout 
                 )
@@ -264,104 +321,71 @@ class Validator:
                 for i, uid in enumerate(available_uids):
                     resp = validate_push_responses[i]
                     if resp and resp.dendrite.status_code == 200 and resp.validation_passed:
-                        current_round_scores[uid] += 0.5 # Award 0.5 points for successful push validation
-                        bt.logging.info(f"UID {uid}: Successfully validated push (seeded). Partial score: {current_round_scores[uid]}")
+                        current_round_scores[uid] += 0.5 # Add score for miner's explicit confirmation
+                        bt.logging.info(f"UID {uid}: Successfully confirmed VALIDATE_PUSH (seeded). Total score for UID this round: {current_round_scores[uid].item()}")
+                    elif resp:
+                        error_msg = resp.error_message or "Validation_passed is false or missing."
+                        status_code = resp.dendrite.status_code
+                        bt.logging.warning(f"UID {uid}: Failed VALIDATE_PUSH. Status: {status_code}, Miner Error: '{error_msg}'. Current score for UID: {current_round_scores[uid].item()}")
                     else:
-                        error_msg = resp.error_message if resp and resp.error_message else "No/failed response or validation_passed is false."
-                        status_code = resp.dendrite.status_code if resp and resp.dendrite else "N/A"
-                        bt.logging.warning(f"UID {uid}: Failed VALIDATE_PUSH. Status: {status_code}, Error: '{error_msg}'")
-
-                # --- Step 4: Query miners to CLONE THE REPO ---
-                clone_repo_synapse = RadicleSubnetSynapse(
-                    operation_type="CLONE_REPO",
-                    repo_rid=repo_rid  
-                    # commit_hash is not needed for clone operation directly by miner
-                )
-                bt.logging.info(f"Querying {len(available_uids)} miners for CLONE_REPO of RID {repo_rid}...")
-
-                clone_repo_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
-                    axons=[self.metagraph.axons[uid] for uid in available_uids],
-                    synapse=clone_repo_synapse,
-                    timeout=self.query_timeout # Potentially longer timeout for cloning
-                )
-
-                for i, uid in enumerate(available_uids):
-                    resp = clone_repo_responses[i]
-                    if resp and resp.dendrite.status_code == 200 and resp.clone_success:
-                        current_round_scores[uid] += 0.5 # Award 0.5 points for successful clone
-                        bt.logging.info(f"UID {uid}: Successfully cloned repo. Total score this round: {current_round_scores[uid]}")
-                    else:
-                        error_msg = resp.error_message if resp and resp.error_message else "No/failed response or clone_success is false."
-                        status_code = resp.dendrite.status_code if resp and resp.dendrite else "N/A"
-                        bt.logging.warning(f"UID {uid}: Failed CLONE_REPO. Status: {status_code}, Error: '{error_msg}'")
+                        bt.logging.warning(f"UID {uid}: No response or transport error for VALIDATE_PUSH. Current score for UID: {current_round_scores[uid].item()}")
                 
                 # --- Step 5: Update moving average scores ---
-                for uid_idx in range(self.metagraph.n.item()): # Iterate all possible UIDs
-                    if uid_idx in available_uids: # Only update those queried
-                        # Blend the current round's score (0 to 1.0) into the moving average
+                for uid_idx in range(self.metagraph.n.item()):
+                    if uid_idx in available_uids: 
                         self.moving_avg_scores[uid_idx] = (
                             (1 - self.alpha) * self.moving_avg_scores[uid_idx] +
-                            self.alpha * current_round_scores[uid_idx]
+                            self.alpha * current_round_scores[uid_idx] # current_round_scores can be between 0 and 1.0
                         )
-                    # Optionally, decay scores for UIDs not queried (e.g., self.moving_avg_scores[uid_idx] *= (1 - some_decay_factor))
                 
-                bt.logging.info(f"Moving Average Scores: {['{:.3f}'.format(s.item()) for s in self.moving_avg_scores]}")
+                bt.logging.info(f"Validator: Moving Average Scores: {['{:.3f}'.format(s.item()) for s in self.moving_avg_scores]}")
 
                 # --- Step 6: Set weights on Bittensor network ---
+                # (Existing logic for setting weights can remain largely the same)
                 current_block = self.subtensor.get_current_block()
-                # Use self.metagraph.last_update[self.my_subnet_uid].item() for last set weights block for this validator
-                # However, a simpler approach is to use self.subtensor.get_last_set_weights_block(netuid, uid)
-                # For now, your existing logic for last_set_weights_block is:
-                # last_set_weights_block = self.metagraph.last_update[self.my_subnet_uid].item() # This is last update time of neuron, not necessarily last set_weights from this validator
-                # A more direct way:
                 try:
-                    last_set_weights_block = self.subtensor.get_last_set_weights_block(self.config.netuid, self.wallet.hotkey.ss58_address)
+                    last_set_weights_block = self.metagraph.last_update[self.my_subnet_uid].item()
                 except Exception as e:
                     bt.logging.warning(f"Could not get last_set_weights_block for validator UID {self.my_subnet_uid}, defaulting to 0. Error: {e}")
-                    last_set_weights_block = 0 # Default if call fails (e.g. validator not yet set weights)
-
-
+                    last_set_weights_block = 0
+                
                 tempo = self.subtensor.tempo(self.config.netuid)
 
                 if (current_block - last_set_weights_block) > tempo :
-                    if torch.sum(self.moving_avg_scores) > 0:
+                    if torch.sum(self.moving_avg_scores) > 1e-6: # Check for sum being practically non-zero
                         weights_to_set = self.moving_avg_scores / torch.sum(self.moving_avg_scores)
-                        # Ensure no NaN values if sum is very small, though sum > 0 check helps
-                        weights_to_set = torch.nan_to_num(weights_to_set, nan=0.0)
-                    else:  
-                        # If all scores are zero, set uniform weights for all *active* miners, or just zeros.
-                        # Setting zeros is safer if no one is performing.
+                        weights_to_set = torch.nan_to_num(weights_to_set, nan=0.0) # Handle potential NaNs
+                    else: 
                         weights_to_set = torch.zeros_like(self.moving_avg_scores)
                     
-                    # Ensure UIDs and weights tensors are correctly aligned and sized
-                    uids_for_weights = self.metagraph.uids # This is a tensor of UIDs
+                    uids_for_weights = self.metagraph.uids 
 
-                    bt.logging.info(f"Attempting to set weights: {['{:.3f}'.format(w.item()) for w in weights_to_set]} for UIDs: {uids_for_weights.tolist()}")
+                    bt.logging.info(f"Validator: Attempting to set weights: {['{:.3f}'.format(w.item()) for w in weights_to_set]} for UIDs: {uids_for_weights.tolist()}")
                     
                     success, message = self.subtensor.set_weights(
                         netuid=self.config.netuid,
                         wallet=self.wallet,
-                        uids=uids_for_weights, # Make sure this is a 1D tensor of UIDs
-                        weights=weights_to_set, # Make sure this is a 1D tensor of weights
-                        wait_for_inclusion=True, # Recommended for critical ops
-                        wait_for_finalization=False, # Faster, inclusion is usually enough
-                        version_key = bt.__version_as_int__ # Use current bittensor version as protocol key
+                        uids=uids_for_weights, 
+                        weights=weights_to_set, 
+                        wait_for_inclusion=True, 
+                        wait_for_finalization=False,
+                        version_key = bt.__version_as_int__
                     )
                     if success:
-                        bt.logging.info(f"Successfully set weights: {message}")
+                        bt.logging.info(f"Validator: Successfully set weights: {message}")
                     else:
-                        bt.logging.error(f"Failed to set weights: {message}")
+                        bt.logging.error(f"Validator: Failed to set weights: {message}")
                 else:
-                    bt.logging.info(f"Not time to set weights yet. Current block: {current_block}, Last set by me: {last_set_weights_block}, Tempo: {tempo}. Wait: {tempo - (current_block - last_set_weights_block)} blocks.")
+                    bt.logging.info(f"Validator: Not time to set weights yet. Current block: {current_block}, Last set by me: {last_set_weights_block}, Tempo: {tempo}. Wait: {tempo - (current_block - last_set_weights_block)} blocks.")
 
                 # --- Step 7: Sync metagraph and wait ---
                 self.steps_passed += 1
                 if self.steps_passed % 5 == 0: # Sync metagraph every 5 validation cycles
-                    bt.logging.info("Syncing metagraph.")
+                    bt.logging.info("Validator: Syncing metagraph.")
                     self.metagraph.sync(subtensor=self.subtensor)
                     # Resize scores if metagraph size changed
                     if self.scores.size(0) != self.metagraph.n.item():
-                        bt.logging.info("Metagraph size changed. Reinitializing scores and moving averages.")
+                        bt.logging.info("Validator: Metagraph size changed. Reinitializing scores and moving averages.")
                         self.scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32)
                         self.moving_avg_scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32)
                         # Also re-check available_uids as metagraph changed
@@ -371,14 +395,14 @@ class Validator:
                 await asyncio.sleep(max(60, tempo // 2 if tempo > 0 else 60)) # e.g., wait at least 60s or half a tempo
 
             except RuntimeError as e:
-                bt.logging.error(f"RuntimeError in validation loop: {e}")
+                bt.logging.error(f"Validator: RuntimeError in validation loop: {e}")
                 traceback.print_exc()
                 await asyncio.sleep(60)  
             except KeyboardInterrupt:
-                bt.logging.success("Keyboard interrupt detected. Exiting validator.")
+                bt.logging.success("Validator: Keyboard interrupt detected. Exiting validator.")
                 break
             except Exception as e:
-                bt.logging.error(f"Unexpected error in validation loop: {e}")
+                bt.logging.error(f"Validator: Unexpected error in validation loop: {e}")
                 traceback.print_exc()
                 await asyncio.sleep(60)
 
