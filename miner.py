@@ -1,5 +1,3 @@
-import shutil
-import uuid
 import os
 import time
 import argparse
@@ -246,56 +244,6 @@ class Miner:
                 synapse.status_message = "FAILURE"
                 synapse.validation_passed = False
                 synapse.error_message = f"Could not confirm seeding of RID {synapse.repo_rid}. Radicle seed output: {stderr}. Radicle list output: {list_stderr}"
-       
-        # NEW: Handle CLONE_REPO operation
-        elif synapse.operation_type == "CLONE_REPO":
-           if not synapse.repo_rid:
-              synapse.status_message = "FAILURE"
-              synapse.error_message = "repo_rid not provided for CLONE_REPO"
-              synapse.clone_success = False
-              return synapse
-           
-           bt.logging.info(f"Validator requests clone for RID: {synapse.repo_rid}")
-
-           # Define a temporary directory for cloning
-           base_clone_dir = "/tmp/miner_clones" 
-           os.makedirs(base_clone_dir, exist_ok=True)
-    
-           # Create a unique directory for this specific clone operation
-           clone_instance_id = str(uuid.uuid4())[:8]
-           sanitized_rid_for_path = synapse.repo_rid.replace(":", "_").replace("/", "_")
-           clone_target_dir = os.path.join(base_clone_dir, f"{sanitized_rid_for_path}_{clone_instance_id}")
-
-           try:
-               bt.logging.debug(f"Attempting to clone {synapse.repo_rid} into {clone_target_dir}")
-               clone_success_flag, stdout, stderr = run_command(f"rad clone {synapse.repo_rid} {clone_target_dir}")
-
-               # Check for successful clone
-               if clone_success_flag and os.path.exists(os.path.join(clone_target_dir, ".git")):
-                   bt.logging.info(f"Successfully cloned RID {synapse.repo_rid} to {clone_target_dir}")
-                   synapse.clone_success = True
-                   synapse.status_message = "SUCCESS"
-               else:
-                    bt.logging.warning(f"Failed to clone RID {synapse.repo_rid}. Success_flag: {clone_success_flag}")
-                    synapse.clone_success = False
-                    synapse.status_message = "FAILURE"
-                    synapse.error_message = f"Clone command failed or .git dir not found. Stderr: {stderr or stdout}"
-           except Exception as e:
-                bt.logging.error(f"Exception during clone operation for {synapse.repo_rid}: {e}")
-                synapse.clone_success = False
-                synapse.status_message = "FAILURE"
-                synapse.error_message = f"Server-side exception during clone: {str(e)}"
-           finally:
-                # Clean up the temporary clone directory
-               if os.path.exists(clone_target_dir):
-                 try:
-                    shutil.rmtree(clone_target_dir)
-                    bt.logging.debug(f"Successfully removed temporary clone directory: {clone_target_dir}")
-                 except Exception as e:
-                   bt.logging.error(f"Error removing temporary clone directory {clone_target_dir}: {e}")
-           return synapse
-
-
 
         elif synapse.operation_type == "GET_MINER_STATUS":
             bt.logging.info("Validator requests miner status.")
@@ -326,8 +274,6 @@ class Miner:
 
         bt.logging.info(f"Responding to {synapse.dendrite.hotkey}: {synapse.status_message}, Validation: {synapse.validation_passed}, Error: {synapse.error_message}")
         return synapse
-
-
 
     def setup_axon(self):
         self.axon = bt.axon(wallet=self.wallet, config=self.config)
