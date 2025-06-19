@@ -7,6 +7,7 @@ import subprocess
 import json
 import shlex
 from typing import Tuple, Optional, Dict, List
+import pexpect
 
 from protocol import RadicleSubnetSynapse
 
@@ -147,21 +148,22 @@ class Miner:
         try:
             # Using Popen for non-blocking start. For production, systemd is better.
             command = "rad node start"
-            self.radicle_node_process = subprocess.Popen(shlex.split(command),
-                                                         stdout=subprocess.PIPE,
-                                                         stderr=subprocess.PIPE,
-                                                         text=True)
+            child = pexpect.spawn(command, encoding="utf-8")
+            child.expect("Passphrase:")
+            child.sendline("<your_radicle_passphrase>")  # Replace with your actual passphrase or handle securely
+            bt.logging.info("Radicle node started with provided passphrase.")
+            self.radicle_node_process = child
+            bt.logging.info(f"Radicle node process started. Monitoring output... {child.pid}")
             time.sleep(5) # Give it a few seconds to start up
-            if self.radicle_node_process.poll() is None:
-                bt.logging.info(f"Radicle node started (PID: {self.radicle_node_process.pid}). Output will be logged periodically.")
-            else:
-                stdout, stderr = self.radicle_node_process.communicate()
-                bt.logging.error(f"Radicle node failed to start or exited unexpectedly. Return code: {self.radicle_node_process.returncode}\nStdout: {stdout}\nStderr: {stderr}")
-                self.radicle_node_process = None
-                # exit(1) # Decide if this is a fatal error preventing miner operation
+        except pexpect.exceptions.TIMEOUT as e:
+            bt.logging.error(f"Timeout while starting Radicle node: {e}")
+            self.radicle_node_process = None
+        except pexpect.exceptions.EOF as e:
+            bt.logging.error(f"Radicle node exited unexpectedly: {e}")
+            self.radicle_node_process = None
         except Exception as e:
             bt.logging.error(f"Failed to start Radicle node: {e}")
-            # exit(1)
+            self.radicle_node_process = None
 
     def _log_radicle_node_output(self):
         if self.radicle_node_process and self.radicle_node_process.stdout:
@@ -298,8 +300,8 @@ class Miner:
                 if step % 30 == 0 and self.radicle_node_process:
                      self._log_radicle_node_output()
                      # Check if radicle_node_process is still alive
-                     if self.radicle_node_process.poll() is not None:
-                         bt.logging.error(f"Radicle node process terminated unexpectedly with code {self.radicle_node_process.returncode}. Restarting...")
+                     if self.radicle_node_process.pid is None:
+                         bt.logging.error(f"Radicle node process terminated unexpectedly with code {self.radicle_node_process.codec_errors}. Restarting...")
                          self.start_radicle_node() # Attempt to restart
 
                 if step % 60 == 0:
@@ -327,11 +329,12 @@ class Miner:
                 bt.logging.info("Radicle node process stopped.")
             bt.logging.success("Miner killed by keyboard interrupt.")
         except Exception:
+            self.radicle_node_process.terminate()
             bt.logging.error(traceback.format_exc())
         finally:
             if self.axon:
                 self.axon.stop()
-            if self.radicle_node_process and self.radicle_node_process.poll() is None:
+            if self.radicle_node_process and self.radicle_node_process.pid is None:
                 self.radicle_node_process.kill()
 
 

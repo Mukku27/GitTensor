@@ -1,0 +1,143 @@
+ python validator.py --wallet.name validator --wallet.hotkey default --subtensor.network local --netuid 2 --logging.debug
+2025-06-18 23:34:40.210 |       INFO       | bittensor:loggingmachine.py:423 | Debug enabled.
+2025-06-18 23:34:44.625 |       INFO       | bittensor:loggingmachine.py:410 | Enabling debug.
+2025-06-18 23:34:44.626 |       INFO       | bittensor:loggingmachine.py:423 | Debug enabled.
+2025-06-18 23:34:44.626 |       INFO       | bittensor:validator.py:90 | Running validator for subnet: 2 on network: local with config:
+2025-06-18 23:34:44.630 |       INFO       | bittensor:validator.py:91 | radicle:
+  validator:
+    alias: bittensor-validator-cef99a62
+validator:
+  alpha: 0.05
+netuid: 2
+subtensor:
+  network: local
+  chain_endpoint: wss://entrypoint-finney.opentensor.ai:443
+  _mock: false
+logging:
+  debug: true
+  trace: false
+  info: false
+  record_log: false
+  logging_dir: /home/hemu21/.bittensor/miners/validator/None/netuid2/validator
+wallet:
+  name: validator
+  hotkey: default
+  path: ~/.bittensor/wallets/
+config: false
+strict: false
+no_version_checking: false
+full_path: /home/hemu21/.bittensor/miners/validator/None/netuid2/validator
+2025-06-18 23:34:44.630 |       INFO       | bittensor:validator.py:94 | Checking Radicle CLI installation...
+2025-06-18 23:34:44.630 |      DEBUG       | bittensor:validator.py:23 | Running command: rad --version (cwd: None)
+2025-06-18 23:34:44.801 |       INFO       | bittensor:validator.py:97 | Radicle CLI found: rad 1.2.0 (6f25d73d3df062e7b49df4b2e9dd7cb5aa3a98ca)
+2025-06-18 23:34:44.802 |       INFO       | bittensor:validator.py:108 | Ensuring Radicle identity for validator...
+2025-06-18 23:34:44.802 |       INFO       | bittensor:validator.py:126 | Radicle keys directory found. Assuming identity 'bittensor-validator-cef99a62' is available or will be created/used by rad commands.
+2025-06-18 23:34:44.802 |      DEBUG       | bittensor:validator.py:23 | Running command: rad auth bittensor-validator-cef99a62 (cwd: None)
+2025-06-18 23:34:44.991 |       INFO       | bittensor:validator.py:133 | Setting up Bittensor objects.
+2025-06-18 23:34:44.991 |       INFO       | bittensor:validator.py:135 | Wallet: Wallet (Name: 'validator', Hotkey: 'default', Path: '~/.bittensor/wallets/')    
+2025-06-18 23:34:44.991 |      DEBUG       | bittensor:subtensor.py:146 | Connecting to network: local, chain_endpoint: ws://127.0.0.1:9944> ...
+2025-06-18 23:34:45.857 |       INFO       | bittensor:validator.py:137 | Subtensor: Network: local, Chain: ws://127.0.0.1:9944
+2025-06-18 23:34:46.162 |       INFO       | bittensor:validator.py:139 | Dendrite: dendrite(5Hn4KmajqKNtRWW4H4rrrKK6iFmyMwEU6Ca8P78Ey423CHW2)
+2025-06-18 23:34:46.343 |       INFO       | bittensor:validator.py:141 | Metagraph: metagraph(netuid:2, n:3, block:867, network:local)
+2025-06-18 23:34:46.346 |       INFO       | bittensor:validator.py:147 | Running validator on uid: 2
+2025-06-18 23:34:46.347 |       INFO       | bittensor:validator.py:239 | Starting validator sync loop.
+2025-06-18 23:34:46.347 |       INFO       | bittensor:validator.py:244 | Attempting to create and push a new Radicle repository...
+2025-06-18 23:34:46.348 |      DEBUG       | bittensor:validator.py:23 | Running command: git init (cwd: /tmp/test-repo-098ce6ad)
+2025-06-18 23:34:46.359 |      DEBUG       | bittensor:validator.py:23 | Running command: git checkout -b main (cwd: /tmp/test-repo-098ce6ad)
+2025-06-18 23:34:46.366 |      DEBUG       | bittensor:validator.py:23 | Running command: git add . (cwd: /tmp/test-repo-098ce6ad)
+2025-06-18 23:34:46.374 |      DEBUG       | bittensor:validator.py:23 | Running command: git commit -m 'Initial commit 1750269886.3747609' (cwd: /tmp/test-repo-098ce6ad)
+2025-06-18 23:34:46.387 |      DEBUG       | bittensor:validator.py:23 | Running command: git rev-parse HEAD (cwd: /tmp/test-repo-098ce6ad)
+2025-06-18 23:34:46.392 |      DEBUG       | bittensor:validator.py:185 | Running rad init with passphrase via pexpect.
+2025-06-18 23:35:23.409 |     WARNING      | bittensor:validator.py:207 | Passphrase prompt not shown — identity might be already unlocked.
+2025-06-18 23:35:23.410 |      DEBUG       | bittensor:validator.py:209 | Radicle init output (no passphrase): 
+Initializing public radicle 👾 repository in /tmp/test-repo-098ce6ad..
+
+✓ Repository test-repo-098ce6ad created.
+
+Your Repository ID (RID) is rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs.
+You can show it any time by running `rad .` from this directory.
+
+◢ Syncing..! Warning: Upload error for rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs to z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7: connection reset
+! Warning: Upload error for rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs to z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7: error writing to stream: channel is disconnected
+◤ Uploaded to z6MkrLMMsiPWUcNPHcRajuMi9mDfYckSoJyPwwnknocNYPm7, 0 peer(s) remaining..! Warning: Upload error for rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs to z6MkoK2du54THVFvDRYmPxTttkbGtiH9ZEeCf91ndTnzBaW5: connection reset
+! Warning: Upload error for rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs to z6MkoK2du54THVFvDRYmPxTttkbGtiH9ZEeCf91ndTnzBaW5: error writing to stream: channel is disconnected
+◤ Uploaded to z6MkoK2du54THVFvDRYmPxTttkbGtiH9ZEeCf91ndTnzBaW5, 0 peer(s) remaining..✓ Repository successfully synced to z6MkoK2du54THVFvDRYmPxTttkbGtiH9ZEeCf91ndTnzBaW5
+✓ Repository successfully synced to 1 node(s).
+
+Your repository has been synced to the network and is now discoverable by peers.
+Unfortunately, you were unable to replicate your repository to your preferred seeds.
+To push changes, run `git push`.
+2025-06-18 23:35:24.412 |      DEBUG       | bittensor:validator.py:23 | Running command: rad inspect --rid (cwd: /tmp/test-repo-098ce6ad)
+2025-06-18 23:35:24.634 |      DEBUG       | bittensor:validator.py:220 | Radicle inspect output: rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs
+2025-06-18 23:35:24.635 |       INFO       | bittensor:validator.py:226 | Radicle project initialized. RID: rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs
+2025-06-18 23:35:24.635 |       INFO       | bittensor:validator.py:227 | Radicle project pushed successfully: rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs
+2025-06-18 23:35:24.739 |      DEBUG       | bittensor:validator.py:246 | Repo RID: rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs, Commit Hash: 2414619f12fa51d4bc3837dfd2f08f7cb2afe0c2, Push Error: None
+2025-06-18 23:35:24.740 |       INFO       | bittensor:validator.py:253 | Successfully pushed test repo. RID: rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs, Commit: 2414619f12fa51d4bc3837dfd2f08f7cb2afe0c2
+2025-06-18 23:35:24.740 |       INFO       | bittensor:validator.py:263 | Found 1 active miners to query for validation.
+2025-06-18 23:35:24.741 |      DEBUG       | bittensor:validator.py:270 | Created validate_synapse: operation_type='VALIDATE_PUSH' repo_rid='rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs' commit_hash='2414619f12fa51d4bc3837dfd2f08f7cb2afe0c2' validation_passed=None miner_radicle_node_alias=None miner_radicle_node_id=None is_miner_radicle_node_running=None seeded_rids_count=None status_message=None error_message=None
+2025-06-18 23:35:24.741 |       INFO       | bittensor:validator.py:271 | Querying 1 available miners to validate push of RID rad:zEAeSGUnb3LEfXRyTchYBsAUuJKs... 
+2025-06-18 23:35:24.750 |      ERROR       | bittensor:validator.py:372 | Unexpected error in validation loop: 'property' object is not iterable
+Traceback (most recent call last):
+  File "/mnt/d/GitTensor/validator.py", line 275, in run_sync_loop
+    validate_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 544, in forward
+    responses = await query_all_axons(streaming)
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 539, in query_all_axons
+    return await asyncio.gather(
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 526, in single_axon_response
+    return await self.call(
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 584, in call
+    synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout)
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 737, in preprocess_synapse_for_request
+    message = f"{synapse.dendrite.nonce}.{synapse.dendrite.hotkey}.{synapse.axon.hotkey}.{synapse.dendrite.uuid}.{synapse.body_hash}"
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/synapse.py", line 724, in body_hash
+    for field in required_hash_fields:
+TypeError: 'property' object is not iterable
+2025-06-18 23:36:24.839 |       INFO       | bittensor:validator.py:244 | Attempting to create and push a new Radicle repository...
+2025-06-18 23:36:24.841 |      DEBUG       | bittensor:validator.py:23 | Running command: git init (cwd: /tmp/test-repo-d4dc2cd1)
+2025-06-18 23:36:24.854 |      DEBUG       | bittensor:validator.py:23 | Running command: git checkout -b main (cwd: /tmp/test-repo-d4dc2cd1)
+2025-06-18 23:36:24.863 |      DEBUG       | bittensor:validator.py:23 | Running command: git add . (cwd: /tmp/test-repo-d4dc2cd1)
+2025-06-18 23:36:24.871 |      DEBUG       | bittensor:validator.py:23 | Running command: git commit -m 'Initial commit 1750269984.871109' (cwd: /tmp/test-repo-d4dc2cd1)
+2025-06-18 23:36:24.885 |      DEBUG       | bittensor:validator.py:23 | Running command: git rev-parse HEAD (cwd: /tmp/test-repo-d4dc2cd1)
+2025-06-18 23:36:24.891 |      DEBUG       | bittensor:validator.py:185 | Running rad init with passphrase via pexpect.
+2025-06-18 23:36:31.189 |     WARNING      | bittensor:validator.py:207 | Passphrase prompt not shown — identity might be already unlocked.
+2025-06-18 23:36:31.189 |      DEBUG       | bittensor:validator.py:209 | Radicle init output (no passphrase): 
+Initializing public radicle 👾 repository in /tmp/test-repo-d4dc2cd1..
+
+✓ Repository test-repo-d4dc2cd1 created.
+
+Your Repository ID (RID) is rad:zytaEVyRYFtujTLmzEaBUGh6PD75.
+You can show it any time by running `rad .` from this directory.
+
+✓ Repository successfully announced to the network.
+
+Your repository has been announced to the network and is now discoverable by peers.
+You can check for any nodes that have replicated your repository by running `rad sync status`.
+
+To push changes, run `git push`.
+2025-06-18 23:36:32.191 |      DEBUG       | bittensor:validator.py:23 | Running command: rad inspect --rid (cwd: /tmp/test-repo-d4dc2cd1)
+2025-06-18 23:36:32.399 |      DEBUG       | bittensor:validator.py:220 | Radicle inspect output: rad:zytaEVyRYFtujTLmzEaBUGh6PD75
+2025-06-18 23:36:32.400 |       INFO       | bittensor:validator.py:226 | Radicle project initialized. RID: rad:zytaEVyRYFtujTLmzEaBUGh6PD75
+2025-06-18 23:36:32.400 |       INFO       | bittensor:validator.py:227 | Radicle project pushed successfully: rad:zytaEVyRYFtujTLmzEaBUGh6PD75
+2025-06-18 23:36:32.506 |      DEBUG       | bittensor:validator.py:246 | Repo RID: rad:zytaEVyRYFtujTLmzEaBUGh6PD75, Commit Hash: 74e0e546b6af6710fab27bf18cbdb3a2e12aa5d8, Push Error: None
+2025-06-18 23:36:32.506 |       INFO       | bittensor:validator.py:253 | Successfully pushed test repo. RID: rad:zytaEVyRYFtujTLmzEaBUGh6PD75, Commit: 74e0e546b6af6710fab27bf18cbdb3a2e12aa5d8
+2025-06-18 23:36:32.506 |       INFO       | bittensor:validator.py:263 | Found 1 active miners to query for validation.
+2025-06-18 23:36:32.507 |      DEBUG       | bittensor:validator.py:270 | Created validate_synapse: operation_type='VALIDATE_PUSH' repo_rid='rad:zytaEVyRYFtujTLmzEaBUGh6PD75' commit_hash='74e0e546b6af6710fab27bf18cbdb3a2e12aa5d8' validation_passed=None miner_radicle_node_alias=None miner_radicle_node_id=None is_miner_radicle_node_running=None seeded_rids_count=None status_message=None error_message=None
+2025-06-18 23:36:32.507 |       INFO       | bittensor:validator.py:271 | Querying 1 available miners to validate push of RID rad:zytaEVyRYFtujTLmzEaBUGh6PD75... 
+2025-06-18 23:36:32.508 |      ERROR       | bittensor:validator.py:372 | Unexpected error in validation loop: 'property' object is not iterable
+Traceback (most recent call last):
+  File "/mnt/d/GitTensor/validator.py", line 275, in run_sync_loop
+    validate_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 544, in forward
+    responses = await query_all_axons(streaming)
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 539, in query_all_axons
+    return await asyncio.gather(
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 526, in single_axon_response
+    return await self.call(
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 584, in call
+    synapse = self.preprocess_synapse_for_request(target_axon, synapse, timeout)
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/dendrite.py", line 737, in preprocess_synapse_for_request
+    message = f"{synapse.dendrite.nonce}.{synapse.dendrite.hotkey}.{synapse.axon.hotkey}.{synapse.dendrite.uuid}.{synapse.body_hash}"
+  File "/mnt/d/arweave-mvp/venv/lib/python3.10/site-packages/bittensor/core/synapse.py", line 724, in body_hash
+    for field in required_hash_fields:
+TypeError: 'property' object is not iterable
