@@ -10,7 +10,7 @@ Built for the next generation of open-source collaboration, GitTensor removes ce
 - [x] Miner running seed node
 - [x] Validator creating repos and miner storing in the node
 - [ ]  Pushing chnages to the Existing Repositiry
-- [ ]  Cloning from the repo from the Seed node of the miner
+- [x]  Cloning from the repo from the Seed node of the miner
 - [ ]  pulling from the repo
 - [ ]  Creating new branch and deletion of the branch
 - [ ]  issues of the repo
