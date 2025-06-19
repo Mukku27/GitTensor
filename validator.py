@@ -259,6 +259,129 @@ class Validator:
                     bt.logging.debug(f"Validator successfully removed its temporary clone directory: {clone_target_dir}")
                 except Exception as e:
                     bt.logging.error(f"Validator error removing its temporary clone directory {clone_target_dir}: {e}")
+    def _clone_for_blocking_test(self, repo_rid: str, miner_node_id: str) -> Optional[str]:
+        """
+        Helper: Clones a repository locally from a specific miner and returns the path.
+        Does NOT delete the directory on success, so 'rad block' can be run from it.
+        This is a utility for the block_repository_on_seed_node function.
+        """
+        if not repo_rid or not miner_node_id:
+            bt.logging.error("Validator [_clone_for_blocking_test]: repo_rid or miner_node_id missing.")
+            return None
+
+        base_clone_dir = "/tmp/validator_pre_block_clones"
+        os.makedirs(base_clone_dir, exist_ok=True)
+        
+        sanitized_rid_for_path = repo_rid.replace(":", "_").replace("/", "_")
+        # Make clone target unique to avoid issues if previous cleanup failed
+        clone_target_dir = os.path.join(base_clone_dir, f"pre_block_{sanitized_rid_for_path}_{str(uuid.uuid4())[:8]}")
+
+        bt.logging.info(f"Validator [_clone_for_blocking_test]: Attempting pre-block clone of RID {repo_rid} from miner {miner_node_id} into: {clone_target_dir}")
+        try:
+            clone_command = f"rad clone {repo_rid} {clone_target_dir} --seed {miner_node_id} --no-follow --no-confirm"
+            bt.logging.debug(f"Validator [_clone_for_blocking_test]: Running clone command: {clone_command}")
+            clone_success_flag, stdout, stderr = run_command(clone_command)
+
+            if clone_success_flag and os.path.exists(os.path.join(clone_target_dir, ".git")):
+                bt.logging.info(f"Validator [_clone_for_blocking_test]: Successfully pre-cloned RID {repo_rid} to {clone_target_dir}.")
+                return clone_target_dir # Return path on success
+            else:
+                bt.logging.warning(f"Validator [_clone_for_blocking_test]: Failed to pre-clone RID {repo_rid} from miner {miner_node_id}. Stdout: '{stdout}', Stderr: '{stderr}'")
+                if os.path.exists(clone_target_dir): # Clean up failed clone attempt
+                    shutil.rmtree(clone_target_dir)
+                return None
+        except Exception as e:
+            bt.logging.error(f"Validator [_clone_for_blocking_test]: Exception during pre-block clone for {repo_rid}: {e}")
+            if os.path.exists(clone_target_dir): # Clean up on exception
+                shutil.rmtree(clone_target_dir)
+            return None
+
+        # NEW FUNCTION as requested
+    def block_repository_on_seed_node(self, repo_rid: str, seeding_miner_node_id: str) -> bool:
+        """
+        Tests the "blocking" of a repository.
+        1. Clones the repo from the specified seeding miner (if not already available locally in a known state).
+        2. Runs 'rad block <RID>' on the validator's local Radicle node against this cloned repo.
+        3. Deletes the local folder of this cloned repo.
+        4. Attempts to re-clone the repo from the same seeding miner.
+        5. Returns True if the re-clone FAILS (indicating the block + inability to fetch from miner was effective), False otherwise.
+        """
+        bt.logging.info(f"Validator [block_repository_on_seed_node]: Starting block test for RID {repo_rid} against miner {seeding_miner_node_id}.")
+
+        # Step 1: Ensure we have a local, tracked version of the repo to run `rad block` against.
+        # We'll use our helper to get a fresh clone for this test.
+        # The `rad block` command needs to be run from within the project directory.
+        local_repo_path_for_block_cmd = self._clone_for_blocking_test(repo_rid, seeding_miner_node_id)
+
+        if not local_repo_path_for_block_cmd:
+            bt.logging.error(f"Validator [block_repository_on_seed_node]: Could not obtain a local clone of {repo_rid} to run 'rad block'. Aborting block test.")
+            return False # Cannot proceed if we can't get a local copy to operate on.
+
+        # Step 2: Run 'rad block <RID>' on the validator's local Radicle node.
+        # The cwd must be the root of the Radicle project.
+        bt.logging.info(f"Validator [block_repository_on_seed_node]: Running 'rad block {repo_rid}' from {local_repo_path_for_block_cmd}.")
+        block_success, stdout_block, stderr_block = run_command(f"rad block {repo_rid}", cwd=local_repo_path_for_block_cmd)
+
+        if not block_success:
+            bt.logging.warning(f"Validator [block_repository_on_seed_node]: 'rad block {repo_rid}' command failed. Stdout: {stdout_block}, Stderr: {stderr_block}")
+            # Clean up the path obtained for block command and return False
+            if os.path.exists(local_repo_path_for_block_cmd): shutil.rmtree(local_repo_path_for_block_cmd)
+            return False 
+        bt.logging.info(f"Validator [block_repository_on_seed_node]: 'rad block {repo_rid}' command successful on local node.")
+
+        # Step 3: Delete the local folder.
+        bt.logging.info(f"Validator [block_repository_on_seed_node]: Deleting local repository folder used for 'rad block': {local_repo_path_for_block_cmd}")
+        try:
+            if os.path.exists(local_repo_path_for_block_cmd):
+                shutil.rmtree(local_repo_path_for_block_cmd)
+                if not os.path.exists(local_repo_path_for_block_cmd):
+                    bt.logging.info(f"Validator [block_repository_on_seed_node]: Successfully deleted {local_repo_path_for_block_cmd}.")
+                else:
+                    bt.logging.error(f"Validator [block_repository_on_seed_node]: Failed to delete {local_repo_path_for_block_cmd} (still exists).")
+                    return False # Critical if local copy cannot be removed for a clean re-clone test.
+            else:
+                bt.logging.warning(f"Validator [block_repository_on_seed_node]: Path {local_repo_path_for_block_cmd} did not exist before delete. This is unexpected.")
+                
+        except Exception as e:
+            bt.logging.error(f"Validator [block_repository_on_seed_node]: Exception deleting {local_repo_path_for_block_cmd}: {e}")
+            return False
+
+        # Step 4: Attempt to re-clone the repository from the same seeding miner.
+        # This reuses the logic pattern of your existing clone_repository_locally.
+        bt.logging.info(f"Validator [block_repository_on_seed_node]: Attempting re-clone of {repo_rid} from miner {seeding_miner_node_id} after local 'rad block'.")
+        
+        base_reclone_dir = "/tmp/validator_post_block_clones" # Different temp area for clarity
+        os.makedirs(base_reclone_dir, exist_ok=True)
+        sanitized_rid_for_path = repo_rid.replace(":", "_").replace("/", "_")
+        reclone_target_dir = os.path.join(base_reclone_dir, f"post_block_{sanitized_rid_for_path}_{str(uuid.uuid4())[:8]}")
+
+        reclone_successful_flag = False
+        try:
+            reclone_command = f"rad clone {repo_rid} {reclone_target_dir} --seed {seeding_miner_node_id} --no-follow --no-confirm"
+            bt.logging.debug(f"Validator [block_repository_on_seed_node]: Running re-clone command: {reclone_command}")
+            reclone_cmd_success, stdout_reclone, stderr_reclone = run_command(reclone_command)
+
+            if reclone_cmd_success and os.path.exists(os.path.join(reclone_target_dir, ".git")):
+                bt.logging.warning(f"Validator [block_repository_on_seed_node]: Re-clone of {repo_rid} from miner {seeding_miner_node_id} SUCCEEDED. This indicates the local 'rad block' did not prevent fetching from this specific miner, or the miner is highly discoverable and Radicle fetched from it anyway. Block test FAILED.")
+                reclone_successful_flag = True # Clone succeeded, so block test failed
+            else:
+                bt.logging.info(f"Validator [block_repository_on_seed_node]: Re-clone of {repo_rid} from miner {seeding_miner_node_id} FAILED as expected after local 'rad block'. This indicates the block was effective in preventing the validator's node from fetching this data *from this miner*. Block test SUCCEEDED. Stdout: {stdout_reclone}, Stderr: {stderr_reclone}")
+                reclone_successful_flag = False # Clone failed, so block test succeeded
+        
+        except Exception as e:
+            bt.logging.error(f"Validator [block_repository_on_seed_node]: Exception during re-clone attempt for {repo_rid}: {e}")
+            reclone_successful_flag = True # If reclone itself had an exception, assume data could have been fetched (fail block test)
+        finally:
+            if os.path.exists(reclone_target_dir): # Clean up the re-clone attempt's directory
+                try:
+                    shutil.rmtree(reclone_target_dir)
+                except Exception as e:
+                    bt.logging.error(f"Validator [block_repository_on_seed_node]: Error removing re-clone temp dir {reclone_target_dir}: {e}")
+        
+        # Returns True if re-clone FAILED (block test successful)
+        # Returns False if re-clone SUCCEEDED (block test failed)
+        return not reclone_successful_flag
+
 
     async def run_sync_loop(self):
         """The main validation loop."""
@@ -312,7 +435,7 @@ class Validator:
                 for i, uid in enumerate(available_uids):
                     resp = validate_push_responses[i]
                     if resp and resp.dendrite.status_code == 200 and resp.validation_passed:
-                        current_round_scores[uid] += 0.5 # Add score for miner's explicit confirmation
+                        current_round_scores[uid] += 0.4 # Add score for miner's explicit confirmation
                         bt.logging.info(f"UID {uid}: Successfully confirmed VALIDATE_PUSH (seeded). Total score for UID this round: {current_round_scores[uid].item()}")
                     elif resp:
                         error_msg = resp.error_message or "Validation_passed is false or missing."
@@ -344,7 +467,7 @@ class Validator:
                             # If validator can clone, all available/queried miners get a base score component for this.
                             # This assumes the network (and thus the miners being queried) made it possible.
                             for uid in available_uids:
-                                current_round_scores[uid] += 0.5 # Base score for data availability
+                                current_round_scores[uid] += 0.3 # Base score for data availability
                         else:
                             bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
                             # Miners will not get this part of the score.
@@ -355,8 +478,29 @@ class Validator:
                         bt.logging.warning(f"UID {uid}: Failed to confirm MINER_STATUS. Status: {status_code}, Miner Error: '{error_msg}'. Current score for UID: {current_round_scores[uid].item()}")
                     else:
                         bt.logging.warning(f"UID {uid}: No response or transport error for MINER_STATUS. Current score for UID: {current_round_scores[uid].item()}")
+
+
+                # ===  Validator tests Blocking functionality ===
+                bt.logging.info(f"Validator: Stage 6 - Testing 'rad block' functionality for {repo_to_validate_rid} with miners that allowed initial clone...")
+                for uid in uids_for_targeted_tests:
+                        if miner_round_data[uid].get('initial_clone_success', False):
+                            miner_node_id = miner_round_data[uid]['node_id'] # We know this exists
+                            bt.logging.info(f"Validator: UID {uid} allowed initial clone. Proceeding to test 'rad block'.")
+
+                            block_test_result = self.block_repository_on_validator_node(
+                                repo_rid=repo_to_validate_rid,
+                                seeding_miner_node_id=miner_node_id
+                            )
+                            miner_round_data[uid]['block_test_success'] = block_test_result
+                            if block_test_result:
+                                current_round_scores[uid] += 0.3 # Score for successful block test
+                                bt.logging.info(f"UID {uid}: Block test for {repo_to_validate_rid} SUCCEEDED. Score +0.2")
+                            else:
+                                bt.logging.warning(f"UID {uid}: Block test for {repo_to_validate_rid} FAILED.")
+                        else:
+                            bt.logging.debug(f"UID {uid}: Skipping block test as initial clone was not successful.")
                 
-                # --- Step 5: Update moving average scores ---
+                # --- Step 6: Update moving average scores ---
                 for uid_idx in range(self.metagraph.n.item()):
                     if uid_idx in available_uids: 
                         self.moving_avg_scores[uid_idx] = (
