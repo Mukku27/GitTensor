@@ -15,5 +15,5 @@ Built for the next generation of open-source collaboration, GitTensor removes ce
 - [ ]  Creating new branch and deletion of the branch
 - [ ]  issues of the repo
 - [ ]  PR  of the repo
-- [ ]  deletion of the repo
+- [x]  deletion of the repo
 ---
