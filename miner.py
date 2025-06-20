@@ -282,6 +282,9 @@ class Miner:
             
             if unseed_success:
                 bt.logging.info(f"Miner: Successfully executed 'rad unseed {synapse.repo_rid}'. Output: {stdout}")
+                rad_path = run_command("rad path")[1].strip()
+                dlt_success, dlt_stdout, dlt_stderr = run_command(f"rm -rf {rad_path}/storage/{synapse.repo_rid.split(':')[1]}")
+                bt.logging.info(f"Miner: Successfully deleted local Radicle directory for {synapse.repo_rid}. Output: {dlt_stdout}, Error: {dlt_stderr}, Success: {dlt_success}")
                 synapse.unseed_command_successful = True
                 synapse.status_message = "SUCCESS"
             else:

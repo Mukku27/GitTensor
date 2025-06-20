@@ -303,7 +303,7 @@ class Validator:
         reclone_actually_failed = False
         try:
             # Important: clone from the specific miner's node_id
-            clone_command = f"rad clone {repo_rid} {reclone_target_dir} --seed {target_miner_node_id} --no-follow --no-confirm"
+            clone_command = f"rad clone {repo_rid} {reclone_target_dir} --seed {target_miner_node_id} --no-confirm"
             bt.logging.debug(f"Validator [test_unseeding]: Running re-clone command: {clone_command}")
             reclone_cmd_success, stdout, stderr = run_command(clone_command)
 
