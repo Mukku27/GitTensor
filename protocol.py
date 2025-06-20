@@ -33,7 +33,10 @@ class RadicleSubnetSynapse(bt.Synapse):
     # For "VALIDATE_PUSH" response
     validation_passed: Optional[bool] = None
 
-    unseed_command_successful: Optional[bool] = None  # NEW: For UNSEED_REPO response
+    #For VALIDATE_CHANGES_SYNC response
+    changes_synced_successfully: Optional[bool] = None 
+
+    unseed_command_successful: Optional[bool] = None  #For UNSEED_REPO response
 
     # For "GET_MINER_STATUS" response
     miner_radicle_node_alias: Optional[str] = None
@@ -64,9 +67,11 @@ class RadicleSubnetSynapse(bt.Synapse):
         if self.commit_hash is not None:
             fields.append("commit_hash")
         
-        # NEW: Add unseed_command_successful to hashed fields if present
+        #Add unseed_command_successful to hashed fields if present
         if self.unseed_command_successful is not None:
             fields.append("unseed_command_successful")
+        if self.changes_synced_successfully is not None:
+            fields.append("changes_synced_successfully")
 
         return fields
     
