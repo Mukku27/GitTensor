@@ -10,7 +10,7 @@ class RadicleSubnetSynapse(bt.Synapse):
 
     Attributes:
     - operation_type: Defines the action to be performed by the miner.
-                      Can be "VALIDATE_PUSH" or "GET_MINER_STATUS".
+                      Can be "VALIDATE_PUSH" or "GET_MINER_STATUS" or "UNSEED_REPO".
     - repo_rid: (For VALIDATE_PUSH) The Radicle ID (RID) of the repository pushed by the validator.
     - commit_hash: (For VALIDATE_PUSH) The commit hash of the push to be validated.
 
@@ -22,7 +22,7 @@ class RadicleSubnetSynapse(bt.Synapse):
     """
 
     # Required: The type of operation the validator is requesting.
-    operation_type: str
+    operation_type: str  # "VALIDATE_PUSH", "GET_MINER_STATUS", "UNSEED_REPO"
 
     # --- Validator-sent fields ---
     # For "VALIDATE_PUSH" operation
@@ -33,15 +33,17 @@ class RadicleSubnetSynapse(bt.Synapse):
     # For "VALIDATE_PUSH" response
     validation_passed: Optional[bool] = None
 
+    unseed_command_successful: Optional[bool] = None  # NEW: For UNSEED_REPO response
+
     # For "GET_MINER_STATUS" response
     miner_radicle_node_alias: Optional[str] = None
     miner_radicle_node_id: Optional[str] = None
     is_miner_radicle_node_running: Optional[bool] = None
-    seeded_rids_count: Optional[int] = None # Number of RIDs the miner is actively seeding
+    seeded_rids_count: Optional[int] = None  # Number of RIDs the miner is actively seeding
     # A more detailed list could be added if needed, but count is simpler for scoring.
 
     # General response fields
-    status_message: Optional[str] = None # General status like "SUCCESS", "FAILURE"
+    status_message: Optional[str] = None  # General status like "SUCCESS", "FAILURE"
     error_message: Optional[str] = None
 
     # Define the axon_hotkey and dendrite_hotkey for Bittensor's signature verification
@@ -49,7 +51,7 @@ class RadicleSubnetSynapse(bt.Synapse):
     # axon_hotkey: Optional[str] = None
     # dendrite_hotkey: Optional[str] = None
 
-    def deserialize(self) -> bytes:
+    def deserialize(self) -> "RadicleSubnetSynapse":
         return self
 
     @property
@@ -61,6 +63,11 @@ class RadicleSubnetSynapse(bt.Synapse):
             fields.append("repo_rid")
         if self.commit_hash is not None:
             fields.append("commit_hash")
+        
+        # NEW: Add unseed_command_successful to hashed fields if present
+        if self.unseed_command_successful is not None:
+            fields.append("unseed_command_successful")
+
         return fields
     
     @property
