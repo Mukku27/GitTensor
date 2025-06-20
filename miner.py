@@ -268,7 +268,39 @@ class Miner:
                 synapse.seeded_rids_count = 0
                 synapse.status_message = "FAILURE"
                 synapse.error_message = f"Radicle node not running or status check failed. Output: {status_stdout} {status_stderr}"
-        
+                
+        elif synapse.operation_type == "VALIDATE_CHANGES_SYNC":
+            if not synapse.repo_rid:
+                synapse.status_message = "FAILURE"
+                synapse.error_message = "repo_rid not provided for VALIDATE_CHANGES_SYNC"
+                synapse.changes_synced_successfully = False
+                return synapse
+
+            bt.logging.info(f"Miner: VALIDATE_CHANGES_SYNC request for RID: {synapse.repo_rid}")
+            
+            # Miner attempts to sync the repository
+            # `rad sync <RID>` should fetch the latest changes pushed by the validator
+            sync_success, stdout_sync, stderr_sync = run_command(f"rad sync {synapse.repo_rid}")
+            
+            if sync_success:
+                # Check if "✓ Synced" or similar success message is in stdout
+                # Radicle's `rad sync` output can vary, be specific if possible.
+                # A simple check for "✓ Synced" or "up to date" can work.
+                if "✓ Synced" in stdout_sync or "up to date" in stdout_sync.lower() or "nothing to sync" in stdout_sync.lower():
+                    bt.logging.info(f"Miner: Successfully synced changes for RID {synapse.repo_rid}. Output: {stdout_sync}")
+                    synapse.changes_synced_successfully = True
+                    synapse.status_message = "SUCCESS"
+                else:
+                    # Sync command ran, but output doesn't confirm sync.
+                    bt.logging.warning(f"Miner: 'rad sync {synapse.repo_rid}' ran, but success message not found in output. Stdout: {stdout_sync}, Stderr: {stderr_sync}")
+                    synapse.changes_synced_successfully = False
+                    synapse.status_message = "FAILURE"
+                    synapse.error_message = f"Sync command output did not confirm sync success. Output: {stdout_sync}"
+            else:
+                bt.logging.warning(f"Miner: Failed to execute 'rad sync {synapse.repo_rid}'. Stderr: {stderr_sync}, Stdout: {stdout_sync}")
+                synapse.changes_synced_successfully = False
+                synapse.status_message = "FAILURE"
+                synapse.error_message = f"rad sync command failed: {stderr_sync or stdout_sync}"
         elif synapse.operation_type == "UNSEED_REPO":
             if not synapse.repo_rid:
                 synapse.status_message = "FAILURE"
