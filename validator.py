@@ -210,7 +210,7 @@ class Validator:
                 return None, None, f"Failed to get Radicle RID"
             bt.logging.info(f"Radicle project initialized. RID: {repo_rid}")
             bt.logging.info(f"Radicle project pushed successfully: {repo_rid}")
-            return repo_rid, commit_hash, None
+            return repo_rid, commit_hash, None , temp_dir
         except Exception as e:
             bt.logging.error(f"Error in create_and_push_radicle_repo: {e}\n{traceback.format_exc()}")
             return None, None, str(e)
@@ -259,6 +259,65 @@ class Validator:
                     bt.logging.debug(f"Validator successfully removed its temporary clone directory: {clone_target_dir}")
                 except Exception as e:
                     bt.logging.error(f"Validator error removing its temporary clone directory {clone_target_dir}: {e}")
+   
+    def _modify_local_repo_and_push(self, local_repo_path: str, repo_rid_for_logging: str) -> bool:
+        """
+        Operates on an ALREADY CLONED local repository:
+        1. Makes a random change to a file within local_repo_path.
+        2. Commits the change.
+        3. Pushes the changes using 'git push rad main' or 'rad push'.
+        Returns True on successful push, False on failure.
+        Caller is responsible for the cleanup of local_repo_path.
+        """
+        if not os.path.isdir(os.path.join(local_repo_path, ".git")):
+            bt.logging.error(f"Validator [_modify_local_repo_and_push]: Path {local_repo_path} is not a valid git repository.")
+            return False
+
+        bt.logging.info(f"Validator [_modify_local_repo_and_push]: Modifying and pushing changes in {local_repo_path} for RID {repo_rid_for_logging}.")
+
+        try:
+            # Step 1: Make random changes (was Step 2 in the combined function)
+            readme_path = os.path.join(local_repo_path, "README.md")
+            if not os.path.exists(readme_path): 
+                readme_path = os.path.join(local_repo_path, "validator_change_file.txt") # Create if README doesn't exist
+            
+            with open(readme_path, "a") as f: 
+                f.write(f"\nValidator-driven update: {uuid.uuid4()} at {time.time()}")
+            bt.logging.info(f"Validator [_modify_local_repo_and_push]: Modified {readme_path}.")
+
+            # Step 2: Commit changes (was Step 3)
+            commit_msg = f"Automated validator update {uuid.uuid4()} for {repo_rid_for_logging}"
+            run_command("git add .", cwd=local_repo_path) # Add all changes
+            commit_success, stdout_commit, stderr_commit = run_command(f"git commit -m \"{commit_msg}\"", cwd=local_repo_path)
+            
+            if not commit_success:
+                if "nothing to commit" in stderr_commit.lower() or \
+                   "no changes added to commit" in stderr_commit.lower() or \
+                   "working tree clean" in stderr_commit.lower(): # More checks for no-op commit
+                    bt.logging.warning(f"Validator [_modify_local_repo_and_push]: No new changes to commit in {local_repo_path}. Will attempt push anyway.")
+                    # Still proceed to push, as an empty push might be valid (though unusual here) or Radicle handles it.
+                else:
+                    bt.logging.error(f"Validator [_modify_local_repo_and_push]: Git commit failed in {local_repo_path}. Stderr: {stderr_commit}")
+                    return False # If commit truly fails for other reasons, abort.
+
+            # Step 3: Push changes (was Step 4)
+            bt.logging.info(f"Validator [_modify_local_repo_and_push]: Pushing changes from {local_repo_path} for {repo_rid_for_logging}.")
+            
+            # `git push rad main` assumes 'rad' remote is set and 'main' is the branch.
+            # Radicle also allows `rad push` from within the directory.
+            # Using `git push rad main` is more explicit if you want to ensure the `main` branch is pushed.
+            push_success, stdout_push, stderr_push = run_command("git push rad main", cwd=local_repo_path)
+            
+            if not push_success:
+                bt.logging.error(f"Validator [_modify_local_repo_and_push]: Failed to push changes for {repo_rid_for_logging} from {local_repo_path}. Stdout: {stdout_push}, Stderr: {stderr_push}")
+                return False
+            
+            bt.logging.info(f"Validator [_modify_local_repo_and_push]: Successfully pushed changes for {repo_rid_for_logging} from {local_repo_path}. Output: {stdout_push}")
+            return True
+
+        except Exception as e:
+            bt.logging.error(f"Validator [_modify_local_repo_and_push]: Exception for {repo_rid_for_logging} in {local_repo_path}: {e}\n{traceback.format_exc()}")
+            return False
 
     async def test_repository_unseeding(self, repo_rid: str, target_miner_uid: int, target_miner_node_id: str) -> bool:
         """
@@ -334,7 +393,7 @@ class Validator:
                 # --- Step 1: Validator creates a new Radicle repo and pushes it ---
                 # This repo (repo_to_validate_rid) is what miners are expected to seed.
                 bt.logging.info("Validator: Attempting to create and push a new Radicle repository for validation...")
-                repo_to_validate_rid, commit_hash, push_error = self.create_and_push_radicle_repo()
+                repo_to_validate_rid, commit_hash, push_error, local_validator_repo_path = self.create_and_push_radicle_repo()
                 
                 if push_error or not repo_to_validate_rid or not commit_hash:
                     bt.logging.error(f"Validator: Failed to create/push Radicle repo for validation round: {push_error}. Skipping.")
@@ -435,6 +494,50 @@ class Validator:
                             bt.logging.warning(f"UID {uid}: Initial clone test for {repo_to_validate_rid} FAILED.")
                     else:
                         bt.logging.debug(f"UID {uid}: Skipping initial clone test as miner status was not successful.")
+                
+
+                # === NEW STAGE 5.5: Validator Pushes Changes, Miner Syncs ===
+                bt.logging.info(f"Validator: Stage 5.5 - Testing pushing changes to {repo_to_validate_rid} and miner sync...")
+                
+                # Validator makes changes and pushes them using the refactored helper
+                # This uses the `local_validator_repo_path` obtained in Stage 1.
+                changes_pushed_by_validator = self._modify_local_repo_and_push(
+                    local_repo_path=local_validator_repo_path,
+                    repo_rid_for_logging=repo_to_validate_rid
+                )
+
+                if changes_pushed_by_validator:
+                    bt.logging.info(f"Validator: Successfully pushed changes to {repo_to_validate_rid} from its local repo {local_validator_repo_path}.")
+                    # Now, for each eligible miner, ask them to sync these changes
+                    for uid in uids_for_targeted_tests: # Iterate miners who have a node_id and passed initial clone
+                        if miner_round_data[uid].get('initial_clone_success', False): 
+                            bt.logging.info(f"Validator: Asking UID {uid} to sync changes for {repo_to_validate_rid}.")
+                            sync_changes_synapse = RadicleSubnetSynapse(
+                                operation_type="VALIDATE_CHANGES_SYNC",
+                                repo_rid=repo_to_validate_rid
+                            )
+                            target_axon_sync = self.metagraph.axons[uid]
+                            sync_changes_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+                                axons=[target_axon_sync], 
+                                synapse=sync_changes_synapse,
+                                timeout=self.query_timeout 
+                            )
+                            
+                            if sync_changes_responses and sync_changes_responses[0].dendrite.status_code == 200 and \
+                               sync_changes_responses[0].changes_synced_successfully:
+                                current_round_scores[uid] += 0.2 # Score for successful sync by miner (0.2)
+                                miner_round_data[uid]['changes_synced_success_by_miner'] = True
+                                bt.logging.info(f"UID {uid}: Miner successfully synced changes for {repo_to_validate_rid}. Score +0.2. Total score for UID: {current_round_scores[uid].item()}")
+                            else:
+                                miner_round_data[uid]['changes_synced_success_by_miner'] = False
+                                error_msg_sync = (sync_changes_responses[0].error_message 
+                                                  if sync_changes_responses and sync_changes_responses[0].error_message 
+                                                  else "Miner sync failed or reported failure.")
+                                bt.logging.warning(f"UID {uid}: Miner FAILED to sync changes for {repo_to_validate_rid}. Error: {error_msg_sync}. Total score for UID: {current_round_scores[uid].item()}")
+                        else:
+                            bt.logging.debug(f"UID {uid}: Skipping changes sync test as initial clone or prerequisite step was not successful.")
+                else:
+                    bt.logging.warning(f"Validator: Failed to modify and push changes for {repo_to_validate_rid} using path {local_validator_repo_path}. Skipping sync validation for all miners this round.")
 
                 # === Stage 6: Test Repository Unseeding by Miners ===
                 bt.logging.info(f"Validator: Stage 6 - Testing UNSEED_REPO for {repo_to_validate_rid} with miners that allowed initial clone...")
