@@ -268,6 +268,29 @@ class Miner:
                 synapse.seeded_rids_count = 0
                 synapse.status_message = "FAILURE"
                 synapse.error_message = f"Radicle node not running or status check failed. Output: {status_stdout} {status_stderr}"
+        
+        elif synapse.operation_type == "UNSEED_REPO":
+            if not synapse.repo_rid:
+                synapse.status_message = "FAILURE"
+                synapse.error_message = "repo_rid not provided for UNSEED_REPO"
+                synapse.unseed_command_successful = False
+                return synapse
+
+            bt.logging.info(f"Miner: Received UNSEED_REPO request for RID: {synapse.repo_rid} from {synapse.dendrite.hotkey}")
+            
+            unseed_success, stdout, stderr = run_command(f"rad unseed {synapse.repo_rid}")
+            
+            if unseed_success:
+                bt.logging.info(f"Miner: Successfully executed 'rad unseed {synapse.repo_rid}'. Output: {stdout}")
+                synapse.unseed_command_successful = True
+                synapse.status_message = "SUCCESS"
+            else:
+                bt.logging.warning(f"Miner: Failed to execute 'rad unseed {synapse.repo_rid}'. Stderr: {stderr}, Stdout: {stdout}")
+                synapse.unseed_command_successful = False
+                synapse.status_message = "FAILURE"
+                synapse.error_message = f"rad unseed command failed: {stderr or stdout}"
+            return synapse
+
         else:
             synapse.status_message = "FAILURE"
             synapse.error_message = f"Unknown operation_type: {synapse.operation_type}"
