@@ -218,7 +218,7 @@ class Validator:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
 
-    def clone_repository_locally(self, repo_rid: str,miner_node_id:str) -> bool:
+    def clone_repository_locally(self, repo_rid: str, miner_node_id: str) -> bool:
         """
         Attempts to clone the given Radicle repository into a temporary local directory.
         Returns True if successful, False otherwise.
@@ -259,129 +259,71 @@ class Validator:
                     bt.logging.debug(f"Validator successfully removed its temporary clone directory: {clone_target_dir}")
                 except Exception as e:
                     bt.logging.error(f"Validator error removing its temporary clone directory {clone_target_dir}: {e}")
-    def _clone_for_blocking_test(self, repo_rid: str, miner_node_id: str) -> Optional[str]:
-        """
-        Helper: Clones a repository locally from a specific miner and returns the path.
-        Does NOT delete the directory on success, so 'rad block' can be run from it.
-        This is a utility for the block_repository_on_seed_node function.
-        """
-        if not repo_rid or not miner_node_id:
-            bt.logging.error("Validator [_clone_for_blocking_test]: repo_rid or miner_node_id missing.")
-            return None
 
-        base_clone_dir = "/tmp/validator_pre_block_clones"
-        os.makedirs(base_clone_dir, exist_ok=True)
+    async def test_repository_unseeding(self, repo_rid: str, target_miner_uid: int, target_miner_node_id: str) -> bool:
+        """
+        Tests if a miner successfully unseeds a repository.
+        1. Sends UNSEED_REPO request to the miner.
+        2. If miner confirms command success, validator attempts to re-clone from that miner.
+        3. Returns True if re-clone FAILS (unseeding verified), False otherwise.
+        """
+        bt.logging.info(f"Validator [test_unseeding]: Testing unseeding for RID {repo_rid} by UID {target_miner_uid} (Node ID: {target_miner_node_id})")
+
+        # Step 1: Send UNSEED_REPO request
+        unseed_synapse = RadicleSubnetSynapse(
+            operation_type="UNSEED_REPO",
+            repo_rid=repo_rid
+        )
         
-        sanitized_rid_for_path = repo_rid.replace(":", "_").replace("/", "_")
-        # Make clone target unique to avoid issues if previous cleanup failed
-        clone_target_dir = os.path.join(base_clone_dir, f"pre_block_{sanitized_rid_for_path}_{str(uuid.uuid4())[:8]}")
+        target_axon = self.metagraph.axons[target_miner_uid]
+        unseed_response: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+            axons=[target_axon], # Query single axon
+            synapse=unseed_synapse,
+            timeout=self.query_timeout # Adjust if unseed takes longer
+        )
 
-        bt.logging.info(f"Validator [_clone_for_blocking_test]: Attempting pre-block clone of RID {repo_rid} from miner {miner_node_id} into: {clone_target_dir}")
-        try:
-            clone_command = f"rad clone {repo_rid} {clone_target_dir} --seed {miner_node_id} --no-follow --no-confirm"
-            bt.logging.debug(f"Validator [_clone_for_blocking_test]: Running clone command: {clone_command}")
-            clone_success_flag, stdout, stderr = run_command(clone_command)
+        if not unseed_response or len(unseed_response) == 0 or not unseed_response[0].dendrite or unseed_response[0].dendrite.status_code != 200:
+            bt.logging.warning(f"Validator [test_unseeding]: No valid response from UID {target_miner_uid} for UNSEED_REPO. Dendrite status: {unseed_response[0].dendrite.status_code if unseed_response and len(unseed_response) > 0 and unseed_response[0].dendrite else 'N/A'}")
+            return False # Cannot verify, consider test failed
 
-            if clone_success_flag and os.path.exists(os.path.join(clone_target_dir, ".git")):
-                bt.logging.info(f"Validator [_clone_for_blocking_test]: Successfully pre-cloned RID {repo_rid} to {clone_target_dir}.")
-                return clone_target_dir # Return path on success
-            else:
-                bt.logging.warning(f"Validator [_clone_for_blocking_test]: Failed to pre-clone RID {repo_rid} from miner {miner_node_id}. Stdout: '{stdout}', Stderr: '{stderr}'")
-                if os.path.exists(clone_target_dir): # Clean up failed clone attempt
-                    shutil.rmtree(clone_target_dir)
-                return None
-        except Exception as e:
-            bt.logging.error(f"Validator [_clone_for_blocking_test]: Exception during pre-block clone for {repo_rid}: {e}")
-            if os.path.exists(clone_target_dir): # Clean up on exception
-                shutil.rmtree(clone_target_dir)
-            return None
+        response = unseed_response[0]
+        if not response.unseed_command_successful:
+            bt.logging.warning(f"Validator [test_unseeding]: Miner UID {target_miner_uid} reported 'rad unseed' command FAILED. Error: {response.error_message}")
+            return False # Miner failed to execute command, test failed.
 
-        # NEW FUNCTION as requested
-    def block_repository_on_seed_node(self, repo_rid: str, seeding_miner_node_id: str) -> bool:
-        """
-        Tests the "blocking" of a repository.
-        1. Clones the repo from the specified seeding miner (if not already available locally in a known state).
-        2. Runs 'rad block <RID>' on the validator's local Radicle node against this cloned repo.
-        3. Deletes the local folder of this cloned repo.
-        4. Attempts to re-clone the repo from the same seeding miner.
-        5. Returns True if the re-clone FAILS (indicating the block + inability to fetch from miner was effective), False otherwise.
-        """
-        bt.logging.info(f"Validator [block_repository_on_seed_node]: Starting block test for RID {repo_rid} against miner {seeding_miner_node_id}.")
+        bt.logging.info(f"Validator [test_unseeding]: Miner UID {target_miner_uid} reported 'rad unseed' command SUCCESSFUL. Attempting verification clone...")
 
-        # Step 1: Ensure we have a local, tracked version of the repo to run `rad block` against.
-        # We'll use our helper to get a fresh clone for this test.
-        # The `rad block` command needs to be run from within the project directory.
-        local_repo_path_for_block_cmd = self._clone_for_blocking_test(repo_rid, seeding_miner_node_id)
-
-        if not local_repo_path_for_block_cmd:
-            bt.logging.error(f"Validator [block_repository_on_seed_node]: Could not obtain a local clone of {repo_rid} to run 'rad block'. Aborting block test.")
-            return False # Cannot proceed if we can't get a local copy to operate on.
-
-        # Step 2: Run 'rad block <RID>' on the validator's local Radicle node.
-        # The cwd must be the root of the Radicle project.
-        bt.logging.info(f"Validator [block_repository_on_seed_node]: Running 'rad block {repo_rid}' from {local_repo_path_for_block_cmd}.")
-        block_success, stdout_block, stderr_block = run_command(f"rad block {repo_rid}", cwd=local_repo_path_for_block_cmd)
-
-        if not block_success:
-            bt.logging.warning(f"Validator [block_repository_on_seed_node]: 'rad block {repo_rid}' command failed. Stdout: {stdout_block}, Stderr: {stderr_block}")
-            # Clean up the path obtained for block command and return False
-            if os.path.exists(local_repo_path_for_block_cmd): shutil.rmtree(local_repo_path_for_block_cmd)
-            return False 
-        bt.logging.info(f"Validator [block_repository_on_seed_node]: 'rad block {repo_rid}' command successful on local node.")
-
-        # Step 3: Delete the local folder.
-        bt.logging.info(f"Validator [block_repository_on_seed_node]: Deleting local repository folder used for 'rad block': {local_repo_path_for_block_cmd}")
-        try:
-            if os.path.exists(local_repo_path_for_block_cmd):
-                shutil.rmtree(local_repo_path_for_block_cmd)
-                if not os.path.exists(local_repo_path_for_block_cmd):
-                    bt.logging.info(f"Validator [block_repository_on_seed_node]: Successfully deleted {local_repo_path_for_block_cmd}.")
-                else:
-                    bt.logging.error(f"Validator [block_repository_on_seed_node]: Failed to delete {local_repo_path_for_block_cmd} (still exists).")
-                    return False # Critical if local copy cannot be removed for a clean re-clone test.
-            else:
-                bt.logging.warning(f"Validator [block_repository_on_seed_node]: Path {local_repo_path_for_block_cmd} did not exist before delete. This is unexpected.")
-                
-        except Exception as e:
-            bt.logging.error(f"Validator [block_repository_on_seed_node]: Exception deleting {local_repo_path_for_block_cmd}: {e}")
-            return False
-
-        # Step 4: Attempt to re-clone the repository from the same seeding miner.
+        # Step 2: Attempt to re-clone from the miner to verify unseeding
         # This reuses the logic pattern of your existing clone_repository_locally.
-        bt.logging.info(f"Validator [block_repository_on_seed_node]: Attempting re-clone of {repo_rid} from miner {seeding_miner_node_id} after local 'rad block'.")
-        
-        base_reclone_dir = "/tmp/validator_post_block_clones" # Different temp area for clarity
+        base_reclone_dir = "/tmp/validator_post_unseed_clones"
         os.makedirs(base_reclone_dir, exist_ok=True)
         sanitized_rid_for_path = repo_rid.replace(":", "_").replace("/", "_")
-        reclone_target_dir = os.path.join(base_reclone_dir, f"post_block_{sanitized_rid_for_path}_{str(uuid.uuid4())[:8]}")
+        reclone_target_dir = os.path.join(base_reclone_dir, f"post_unseed_{sanitized_rid_for_path}_{str(uuid.uuid4())[:8]}")
 
-        reclone_successful_flag = False
+        reclone_actually_failed = False
         try:
-            reclone_command = f"rad clone {repo_rid} {reclone_target_dir} --seed {seeding_miner_node_id} --no-follow --no-confirm"
-            bt.logging.debug(f"Validator [block_repository_on_seed_node]: Running re-clone command: {reclone_command}")
-            reclone_cmd_success, stdout_reclone, stderr_reclone = run_command(reclone_command)
+            # Important: clone from the specific miner's node_id
+            clone_command = f"rad clone {repo_rid} {reclone_target_dir} --seed {target_miner_node_id} --no-follow --no-confirm"
+            bt.logging.debug(f"Validator [test_unseeding]: Running re-clone command: {clone_command}")
+            reclone_cmd_success, stdout, stderr = run_command(clone_command)
 
             if reclone_cmd_success and os.path.exists(os.path.join(reclone_target_dir, ".git")):
-                bt.logging.warning(f"Validator [block_repository_on_seed_node]: Re-clone of {repo_rid} from miner {seeding_miner_node_id} SUCCEEDED. This indicates the local 'rad block' did not prevent fetching from this specific miner, or the miner is highly discoverable and Radicle fetched from it anyway. Block test FAILED.")
-                reclone_successful_flag = True # Clone succeeded, so block test failed
+                bt.logging.warning(f"Validator [test_unseeding]: Re-clone of {repo_rid} from UID {target_miner_uid} (Node: {target_miner_node_id}) SUCCEEDED after unseed. Unseeding test FAILED for this miner.")
+                reclone_actually_failed = False
             else:
-                bt.logging.info(f"Validator [block_repository_on_seed_node]: Re-clone of {repo_rid} from miner {seeding_miner_node_id} FAILED as expected after local 'rad block'. This indicates the block was effective in preventing the validator's node from fetching this data *from this miner*. Block test SUCCEEDED. Stdout: {stdout_reclone}, Stderr: {stderr_reclone}")
-                reclone_successful_flag = False # Clone failed, so block test succeeded
-        
+                bt.logging.info(f"Validator [test_unseeding]: Re-clone of {repo_rid} from UID {target_miner_uid} (Node: {target_miner_node_id}) FAILED as expected after unseed. Unseeding test SUCCEEDED for this miner. Stdout: {stdout}, Stderr: {stderr}")
+                reclone_actually_failed = True
         except Exception as e:
-            bt.logging.error(f"Validator [block_repository_on_seed_node]: Exception during re-clone attempt for {repo_rid}: {e}")
-            reclone_successful_flag = True # If reclone itself had an exception, assume data could have been fetched (fail block test)
+            bt.logging.error(f"Validator [test_unseeding]: Exception during re-clone attempt for {repo_rid} from UID {target_miner_uid}: {e}")
+            reclone_actually_failed = True # If clone itself errors, treat as data not easily available
         finally:
-            if os.path.exists(reclone_target_dir): # Clean up the re-clone attempt's directory
+            if os.path.exists(reclone_target_dir):
                 try:
                     shutil.rmtree(reclone_target_dir)
                 except Exception as e:
-                    bt.logging.error(f"Validator [block_repository_on_seed_node]: Error removing re-clone temp dir {reclone_target_dir}: {e}")
+                    bt.logging.error(f"Validator [test_unseeding]: Error removing re-clone temp dir {reclone_target_dir}: {e}")
         
-        # Returns True if re-clone FAILED (block test successful)
-        # Returns False if re-clone SUCCEEDED (block test failed)
-        return not reclone_successful_flag
-
+        return reclone_actually_failed # True if re-clone failed (unseed successful)
 
     async def run_sync_loop(self):
         """The main validation loop."""
@@ -412,19 +354,49 @@ class Validator:
                 bt.logging.info(f"Validator: Found {len(available_uids)} active miners to query: {available_uids}")
                 
                 current_round_scores = torch.zeros_like(self.scores) # Scores for this specific round
+                miner_round_data = {} # Track detailed info for each miner
 
-               
+                # === Stage 3: Get Miner Status ===
+                miner_status_synapse = RadicleSubnetSynapse(
+                    operation_type="GET_MINER_STATUS"
+                )
+                bt.logging.info(f"Validator: Stage 3 - Querying {len(available_uids)} miners for MINER_STATUS...")
 
-                # --- Step 3: Query miners to explicitly VALIDATE THE PUSH (Miner confirms seeding) ---
+                target_axons_status = [self.metagraph.axons[uid] for uid in available_uids]
+                miner_status_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+                    axons=target_axons_status,
+                    synapse=miner_status_synapse,
+                    timeout=self.query_timeout 
+                )
+
+                uids_for_targeted_tests = []
+                bt.logging.info(f"Validator: Received responses for MINER_STATUS from {len(miner_status_responses)} miners.")
+                for i, uid in enumerate(available_uids):
+                    resp = miner_status_responses[i]
+                    miner_round_data[uid] = {}
+                    if resp and resp.dendrite.status_code == 200 and resp.is_miner_radicle_node_running:
+                        current_round_scores[uid] += 0.1 # Status score component
+                        miner_round_data[uid]['node_id'] = resp.miner_radicle_node_id
+                        miner_round_data[uid]['status_success'] = True
+                        uids_for_targeted_tests.append(uid)
+                        bt.logging.info(f"UID {uid}: Successfully confirmed MINER_STATUS. Miner Node ID: {resp.miner_radicle_node_id}, Seeded RIDs: {resp.seeded_rids_count}. Score +0.2")
+                    elif resp:
+                        error_msg = resp.error_message or "Miner did not confirm seeding or node is not running."
+                        status_code = resp.dendrite.status_code
+                        miner_round_data[uid]['status_success'] = False
+                        bt.logging.warning(f"UID {uid}: Failed to confirm MINER_STATUS. Status: {status_code}, Miner Error: '{error_msg}'.")
+                    else:
+                        miner_round_data[uid]['status_success'] = False
+                        bt.logging.warning(f"UID {uid}: No response or transport error for MINER_STATUS.")
+
+                # === Stage 4: Query miners to explicitly VALIDATE THE PUSH (Miner confirms seeding) ===
                 validate_push_synapse = RadicleSubnetSynapse(
                     operation_type="VALIDATE_PUSH",
                     repo_rid=repo_to_validate_rid,
                     commit_hash=commit_hash
                 )
-                bt.logging.info(f"Validator: Querying {len(available_uids)} miners for VALIDATE_PUSH of RID {repo_to_validate_rid}...")
+                bt.logging.info(f"Validator: Stage 4 - Querying {len(available_uids)} miners for VALIDATE_PUSH of RID {repo_to_validate_rid}...")
 
-
-                
                 target_axons_validate = [self.metagraph.axons[uid] for uid in available_uids]
                 validate_push_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
                     axons=target_axons_validate,
@@ -435,83 +407,69 @@ class Validator:
                 for i, uid in enumerate(available_uids):
                     resp = validate_push_responses[i]
                     if resp and resp.dendrite.status_code == 200 and resp.validation_passed:
-                        current_round_scores[uid] += 0.4 # Add score for miner's explicit confirmation
-                        bt.logging.info(f"UID {uid}: Successfully confirmed VALIDATE_PUSH (seeded). Total score for UID this round: {current_round_scores[uid].item()}")
+                        current_round_scores[uid] += 0.3 # Add score for miner's explicit confirmation
+                        miner_round_data[uid]['validate_push_success'] = True
+                        bt.logging.info(f"UID {uid}: Successfully confirmed VALIDATE_PUSH (seeded). Score +0.3")
                     elif resp:
                         error_msg = resp.error_message or "Validation_passed is false or missing."
                         status_code = resp.dendrite.status_code
-                        bt.logging.warning(f"UID {uid}: Failed VALIDATE_PUSH. Status: {status_code}, Miner Error: '{error_msg}'. Current score for UID: {current_round_scores[uid].item()}")
+                        miner_round_data[uid]['validate_push_success'] = False
+                        bt.logging.warning(f"UID {uid}: Failed VALIDATE_PUSH. Status: {status_code}, Miner Error: '{error_msg}'.")
                     else:
-                        bt.logging.warning(f"UID {uid}: No response or transport error for VALIDATE_PUSH. Current score for UID: {current_round_scores[uid].item()}")
+                        miner_round_data[uid]['validate_push_success'] = False
+                        bt.logging.warning(f"UID {uid}: No response or transport error for VALIDATE_PUSH.")
 
-                # --- Step 4: Validator attempts to get miners status and their node id then clone ---
-                miner_status_synapse = RadicleSubnetSynapse(
-                    operation_type="GET_MINER_STATUS"
-                )
-                bt.logging.info(f"Validator: Querying {len(available_uids)} miners for MINER_STATUS...")
-
-                # This action tests if the repo is available on the network, presumably due to miner(s) seeding it.
-                miner_status_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
-                    axons=target_axons_validate,
-                    synapse=miner_status_synapse,
-                    timeout=self.query_timeout 
-                )
-
-                bt.logging.info(f"Validator: Received responses for MINER_STATUS from {len(miner_status_responses)} miners.")
-                for i, uid in enumerate(available_uids):
-                    resp = miner_status_responses[i]
-                    if resp and resp.dendrite.status_code == 200 and resp.is_miner_radicle_node_running:
-                        validator_clone_successful = self.clone_repository_locally(repo_to_validate_rid, resp.miner_radicle_node_id)
-                        if validator_clone_successful:
-                            bt.logging.info(f"Validator: Successfully cloned its own repo {repo_to_validate_rid} locally.")
-                            # If validator can clone, all available/queried miners get a base score component for this.
-                            # This assumes the network (and thus the miners being queried) made it possible.
-                            for uid in available_uids:
-                                current_round_scores[uid] += 0.3 # Base score for data availability
-                        else:
-                            bt.logging.warning(f"Validator: Failed to clone its own repo {repo_to_validate_rid} locally. Data might not be available from miners yet.")
-                            # Miners will not get this part of the score.
-                        bt.logging.info(f"UID {uid}: Successfully confirmed MINER_STATUS. Miner Node ID: {resp.miner_radicle_node_id}, Seeded RIDs: {resp.seeded_rids_count}. Current score for UID: {current_round_scores[uid].item()}")
-                    elif resp:
-                        error_msg = resp.error_message or "Miner did not confirm seeding or node is not running."
-                        status_code = resp.dendrite.status_code
-                        bt.logging.warning(f"UID {uid}: Failed to confirm MINER_STATUS. Status: {status_code}, Miner Error: '{error_msg}'. Current score for UID: {current_round_scores[uid].item()}")
-                    else:
-                        bt.logging.warning(f"UID {uid}: No response or transport error for MINER_STATUS. Current score for UID: {current_round_scores[uid].item()}")
-
-
-                # ===  Validator tests Blocking functionality ===
-                bt.logging.info(f"Validator: Stage 6 - Testing 'rad block' functionality for {repo_to_validate_rid} with miners that allowed initial clone...")
+                # === Stage 5: Initial Clone Test by Validator ===
+                bt.logging.info(f"Validator: Stage 5 - Testing initial clone of {repo_to_validate_rid} from miners with node_id...")
                 for uid in uids_for_targeted_tests:
-                        if miner_round_data[uid].get('initial_clone_success', False):
-                            miner_node_id = miner_round_data[uid]['node_id'] # We know this exists
-                            bt.logging.info(f"Validator: UID {uid} allowed initial clone. Proceeding to test 'rad block'.")
-
-                            block_test_result = self.block_repository_on_validator_node(
-                                repo_rid=repo_to_validate_rid,
-                                seeding_miner_node_id=miner_node_id
-                            )
-                            miner_round_data[uid]['block_test_success'] = block_test_result
-                            if block_test_result:
-                                current_round_scores[uid] += 0.3 # Score for successful block test
-                                bt.logging.info(f"UID {uid}: Block test for {repo_to_validate_rid} SUCCEEDED. Score +0.2")
-                            else:
-                                bt.logging.warning(f"UID {uid}: Block test for {repo_to_validate_rid} FAILED.")
+                    if miner_round_data[uid].get('status_success', False):
+                        miner_node_id = miner_round_data[uid]['node_id']
+                        bt.logging.info(f"Validator: UID {uid} has node_id {miner_node_id}. Attempting initial clone.")
+                        
+                        initial_clone_successful = self.clone_repository_locally(repo_to_validate_rid, miner_node_id)
+                        miner_round_data[uid]['initial_clone_success'] = initial_clone_successful
+                        if initial_clone_successful:
+                            current_round_scores[uid] += 0.3 # Clone score component
+                            bt.logging.info(f"UID {uid}: Initial clone test for {repo_to_validate_rid} SUCCEEDED. Score +0.3")
                         else:
-                            bt.logging.debug(f"UID {uid}: Skipping block test as initial clone was not successful.")
-                
-                # --- Step 6: Update moving average scores ---
+                            bt.logging.warning(f"UID {uid}: Initial clone test for {repo_to_validate_rid} FAILED.")
+                    else:
+                        bt.logging.debug(f"UID {uid}: Skipping initial clone test as miner status was not successful.")
+
+                # === Stage 6: Test Repository Unseeding by Miners ===
+                bt.logging.info(f"Validator: Stage 6 - Testing UNSEED_REPO for {repo_to_validate_rid} with miners that allowed initial clone...")
+                for uid in uids_for_targeted_tests: # Iterate through miners who had a node_id
+                    if miner_round_data[uid].get('initial_clone_success', False): # Only test unseeding if initial clone from them was possible
+                        miner_node_id_for_unseed_test = miner_round_data[uid]['node_id']
+                        bt.logging.info(f"Validator: UID {uid} allowed initial clone. Proceeding to test UNSEED_REPO.")
+
+                        unseeding_test_passed = await self.test_repository_unseeding(
+                            repo_rid=repo_to_validate_rid,
+                            target_miner_uid=uid,
+                            target_miner_node_id=miner_node_id_for_unseed_test
+                        )
+                        miner_round_data[uid]['unseeding_test_passed'] = unseeding_test_passed
+                        if unseeding_test_passed:
+                            # Unseeding test passed means re-clone FAILED, which is good.
+                            current_round_scores[uid] += 0.3 # Adjust score as needed
+                            bt.logging.info(f"UID {uid}: UNSEED_REPO test for {repo_to_validate_rid} SUCCEEDED (re-clone failed). Score +0.15")
+                        else:
+                            bt.logging.warning(f"UID {uid}: UNSEED_REPO test for {repo_to_validate_rid} FAILED (re-clone succeeded or miner failed unseed cmd).")
+                    else:
+                        bt.logging.debug(f"UID {uid}: Skipping UNSEED_REPO test as initial clone was not successful or no node_id.")
+
+                # --- Stage 7: Update moving average scores ---
                 for uid_idx in range(self.metagraph.n.item()):
                     if uid_idx in available_uids: 
                         self.moving_avg_scores[uid_idx] = (
                             (1 - self.alpha) * self.moving_avg_scores[uid_idx] +
-                            self.alpha * current_round_scores[uid_idx] # current_round_scores can be between 0 and 1.0
+                            self.alpha * current_round_scores[uid_idx] # current_round_scores can be between 0 and 0.95 (0.2+0.3+0.3+0.15)
                         )
                 
-                bt.logging.info(f"Validator: Moving Average Scores: {['{:.3f}'.format(s.item()) for s in self.moving_avg_scores]}")
+                bt.logging.info(f"Validator: Moving Average Scores: {['{:.3f}'.format(s.item()) for s in self.moving_avg_scores]}" )
 
-                # --- Step 6: Set weights on Bittensor network ---
-                # (Existing logic for setting weights can remain largely the same)
+                # --- Step 8: Set weights on Bittensor network ---
+            
                 current_block = self.subtensor.get_current_block()
                 try:
                     last_set_weights_block = self.metagraph.last_update[self.my_subnet_uid].item()
@@ -539,7 +497,7 @@ class Validator:
                         weights=weights_to_set, 
                         wait_for_inclusion=True, 
                         wait_for_finalization=False
-                    )
+                        )
                     if success:
                         bt.logging.info(f"Validator: Successfully set weights: {message}")
                     else:
