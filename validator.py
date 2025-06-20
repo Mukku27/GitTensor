@@ -488,7 +488,7 @@ class Validator:
                         initial_clone_successful = self.clone_repository_locally(repo_to_validate_rid, miner_node_id)
                         miner_round_data[uid]['initial_clone_success'] = initial_clone_successful
                         if initial_clone_successful:
-                            current_round_scores[uid] += 0.3 # Clone score component
+                            current_round_scores[uid] += 0.2 # Clone score component
                             bt.logging.info(f"UID {uid}: Initial clone test for {repo_to_validate_rid} SUCCEEDED. Score +0.3")
                         else:
                             bt.logging.warning(f"UID {uid}: Initial clone test for {repo_to_validate_rid} FAILED.")
@@ -554,7 +554,7 @@ class Validator:
                         miner_round_data[uid]['unseeding_test_passed'] = unseeding_test_passed
                         if unseeding_test_passed:
                             # Unseeding test passed means re-clone FAILED, which is good.
-                            current_round_scores[uid] += 0.3 # Adjust score as needed
+                            current_round_scores[uid] += 0.2 # Adjust score as needed
                             bt.logging.info(f"UID {uid}: UNSEED_REPO test for {repo_to_validate_rid} SUCCEEDED (re-clone failed). Score +0.15")
                         else:
                             bt.logging.warning(f"UID {uid}: UNSEED_REPO test for {repo_to_validate_rid} FAILED (re-clone succeeded or miner failed unseed cmd).")
