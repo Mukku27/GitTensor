@@ -330,6 +330,41 @@ class Miner:
                 synapse.status_message = "FAILURE"
                 synapse.error_message = f"Branch sync command output did not confirm success. Output: {stdout_sync}"
             return synapse
+        
+        elif synapse.operation_type == "VALIDATE_ISSUE_SYNC":
+            rid_to_sync_issue = synapse.issue_sync_repo_id # Use the new field
+            bt.logging.info(f"Miner: VALIDATE_ISSUE_SYNC request for RID: {rid_to_sync_issue}")
+
+            if not rid_to_sync_issue:
+                synapse.status_message = "FAILURE"
+                synapse.error_message = "issue_sync_repo_id not provided for VALIDATE_ISSUE_SYNC"
+                synapse.issue_synced_successfully = False
+                return synapse
+
+            # Miner attempts to sync the repository to get the new issue
+            sync_success, stdout_sync, stderr_sync = run_command(f"rad sync {rid_to_sync_issue} --fetch") # --fetch ensures data is pulled
+            
+            
+           
+            if sync_success:
+                # Check general sync success messages
+                if "✓ Synced" in stdout_sync or "up to date" in stdout_sync.lower() or "nothing to sync" in stdout_sync.lower() or "✓ Project data fetched" in stdout_sync:
+                    bt.logging.info(f"Miner: Successfully ran 'rad sync {rid_to_sync_issue}' (for issue). Output: {stdout_sync}")
+                    synapse.issue_synced_successfully = True
+                    synapse.status_message = "SUCCESS"
+                else:
+                    bt.logging.warning(f"Miner: 'rad sync {rid_to_sync_issue}' (for issue) ran, but success message not clearly found. Stdout: {stdout_sync}, Stderr: {stderr_sync}")
+                    synapse.issue_synced_successfully = False
+                    synapse.status_message = "FAILURE"
+                    synapse.error_message = f"Issue sync command output did not confirm full sync success. Output: {stdout_sync}"
+                    
+            else:
+                bt.logging.warning(f"Miner: Failed to execute 'rad sync {rid_to_sync_issue}' (for issue). Stderr: {stderr_sync}, Stdout: {stdout_sync}")
+                synapse.issue_synced_successfully = False
+                synapse.status_message = "FAILURE"
+                synapse.error_message = f"rad sync command (for issue) failed: {stderr_sync or stdout_sync}"
+            return synapse
+        
         elif synapse.operation_type == "UNSEED_REPO":
             if not synapse.repo_rid:
                 synapse.status_message = "FAILURE"
