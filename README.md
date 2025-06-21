@@ -9,8 +9,8 @@ Built for the next generation of open-source collaboration, GitTensor removes ce
 - [x] Miner and  validator installation  and intialisation of the Radicle CLI
 - [x] Miner running seed node
 - [x] Validator creating repos and miner storing in the node
-- [ ]  Pushing chnages to the Existing Repositiry
-- [x]  Cloning from the repo from the Seed node of the miner
+- [x]  Pushing chnages to the Existing Repositiry(Should be test with miner and validator in different machines
+- [x]  Cloning from the repo from the Seed node of the miner(Should be test with miner and validator in different machines )
 - [ ]  pulling from the repo
 - [ ]  Creating new branch and deletion of the branch
 - [ ]  issues of the repo
