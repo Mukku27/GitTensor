@@ -402,10 +402,6 @@ class Validator:
         if not os.path.isdir(os.path.join(local_repo_path, ".git")): # Check if it's a git repo
             bt.logging.error(f"Validator [_create_issue_locally]: Path {local_repo_path} is not a valid Radicle project directory.")
             return False
-        # A more robust check would be to see if '.rad' directory exists for a Radicle project
-        if not os.path.isdir(os.path.join(local_repo_path, ".rad")):
-            bt.logging.error(f"Validator [_create_issue_locally]: Path {local_repo_path} does not appear to be a Radicle initialized project.")
-            return False
 
 
         bt.logging.info(f"Validator [_create_issue_locally]: Creating issue in {local_repo_path} for RID {repo_rid_for_logging}.")
@@ -432,7 +428,7 @@ class Validator:
         
         # `rad issue open` usually prints the issue ID to stdout, e.g., "✓ Issue #123abc created."
         # We can check for such a message for further confirmation.
-        if "✓ Issue" in stdout_issue and "created" in stdout_issue:
+        if "✓ Synced" in stdout_issue and "seed(s)" in stdout_issue:
             bt.logging.info(f"Validator [_create_issue_locally]: Successfully created issue for {repo_rid_for_logging}. Output: {stdout_issue}")
             return True
         else:
