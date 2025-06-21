@@ -306,6 +306,30 @@ class Miner:
                 synapse.changes_synced_successfully = False
                 synapse.status_message = "FAILURE"
                 synapse.error_message = f"rad sync command failed: {stderr_sync or stdout_sync}"
+
+        elif synapse.operation_type == "VALIDATE_BRANCH_SYNC":
+            
+            rid_to_sync_branch = synapse.branch_sync_repo_id 
+            bt.logging.info(f"Miner: VALIDATE_BRANCH_SYNC request for RID: {rid_to_sync_branch}")
+
+            if not rid_to_sync_branch:
+                synapse.status_message = "FAILURE"
+                synapse.error_message = "branch_sync_repo_id not provided for VALIDATE_BRANCH_SYNC"
+                synapse.branch_changes_synced_successfully = False
+                return synapse
+
+            sync_success, stdout_sync, stderr_sync = run_command(f"rad sync {rid_to_sync_branch} --fetch")
+            
+            if sync_success and ("✓ Synced" in stdout_sync or "up to date" in stdout_sync.lower() or "nothing to sync" in stdout_sync.lower()):
+                bt.logging.info(f"Miner: Successfully synced (including branches) for RID {rid_to_sync_branch}. Output: {stdout_sync}")
+                synapse.branch_changes_synced_successfully = True
+                synapse.status_message = "SUCCESS"
+            else:
+                bt.logging.warning(f"Miner: 'rad sync {rid_to_sync_branch}' (for branch) failed or success message not found. Stdout: {stdout_sync}, Stderr: {stderr_sync}")
+                synapse.branch_changes_synced_successfully = False
+                synapse.status_message = "FAILURE"
+                synapse.error_message = f"Branch sync command output did not confirm success. Output: {stdout_sync}"
+            return synapse
         elif synapse.operation_type == "UNSEED_REPO":
             if not synapse.repo_rid:
                 synapse.status_message = "FAILURE"
