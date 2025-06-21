@@ -391,6 +391,50 @@ class Validator:
         except Exception as e:
             bt.logging.error(f"Validator [_create_branch_...]: Exception for {repo_rid_for_logging} in {local_repo_path}: {e}\n{traceback.format_exc()}")
             return False, new_branch_name
+    
+
+    def _create_issue_locally(self, local_repo_path: str, repo_rid_for_logging: str) -> bool:
+        """
+        Operates on an ALREADY CLONED local repository specified by local_repo_path:
+        1. Creates a new issue using 'rad issue open'.
+        Returns True on successful local issue creation, False on failure.
+        """
+        if not os.path.isdir(os.path.join(local_repo_path, ".git")): # Check if it's a git repo
+            bt.logging.error(f"Validator [_create_issue_locally]: Path {local_repo_path} is not a valid Radicle project directory.")
+            return False
+
+
+        bt.logging.info(f"Validator [_create_issue_locally]: Creating issue in {local_repo_path} for RID {repo_rid_for_logging}.")
+
+        issue_title = f"Automated Test Issue {uuid.uuid4().hex[:8]}"
+        issue_description = f"This is an automated test issue created by the validator for {repo_rid_for_logging} at {time.time()}."
+        
+        # Escape quotes in title and description for the shell command
+        safe_title = shlex.quote(issue_title)
+        safe_description = shlex.quote(issue_description)
+
+        # The `rad issue open` command creates the issue locally.
+        # It might require the identity to be unlocked if it's the first operation.
+        # For now, assuming identity is unlocked or command runs non-interactively.
+        # If pexpect is needed, this would be more complex.
+        issue_cmd = f"rad issue open --title {safe_title} --description {safe_description} " 
+        
+        bt.logging.debug(f"Validator [_create_issue_locally]: Running issue command: {issue_cmd} in {local_repo_path}")
+        issue_success, stdout_issue, stderr_issue = run_command(issue_cmd, cwd=local_repo_path)
+
+        if not issue_success:
+            bt.logging.error(f"Validator [_create_issue_locally]: Failed to create issue for {repo_rid_for_logging} in {local_repo_path}. Stdout: {stdout_issue}, Stderr: {stderr_issue}")
+            return False
+        
+        # `rad issue open` usually prints the issue ID to stdout, e.g., "✓ Issue #123abc created."
+        # We can check for such a message for further confirmation.
+        if "✓ Synced" in stdout_issue and "seed(s)" in stdout_issue:
+            bt.logging.info(f"Validator [_create_issue_locally]: Successfully created issue for {repo_rid_for_logging}. Output: {stdout_issue}")
+            return True
+        else:
+            bt.logging.warning(f"Validator [_create_issue_locally]: 'rad issue open' command ran for {repo_rid_for_logging}, but success message not found. Output: {stdout_issue}. Assuming failure.")
+            return False
+
 
     async def test_repository_unseeding(self, repo_rid: str, target_miner_uid: int, target_miner_node_id: str) -> bool:
         """
@@ -648,6 +692,44 @@ class Validator:
                 else:
                         bt.logging.warning("Validator: Skipping new branch test as no persistent clone path was obtained for modifications.")
 
+                # === NEW STAGE 5.85: Validator Creates Issue, Miner Syncs ===
+                operational_clone_path=test_dir_path 
+                bt.logging.info(f"Validator: Stage 5.85 - Testing issue creation for {repo_to_validate_rid} (via {operational_clone_path}) and miner sync...")
+                issue_created_locally = self._create_issue_locally(
+                            local_repo_path=operational_clone_path, # Use the same clone
+                            repo_rid_for_logging=repo_to_validate_rid
+                        )
+                if issue_created_locally:
+                            bt.logging.info(f"Validator: Issue created locally in {operational_clone_path}. Querying miners to sync issue.")
+                            for uid in uids_for_targeted_tests:
+                                if miner_round_data[uid].get('validate_push_success', False): # Prerequisite: miner is generally responsive and seeding
+                                    sync_issue_synapse = RadicleSubnetSynapse(
+                                        operation_type="VALIDATE_ISSUE_SYNC",
+                                        issue_sync_repo_id=repo_to_validate_rid # Send the RID of the project where issue was made
+                                    )
+                                    target_axon_issue_sync = self.metagraph.axons[uid]
+                                    sync_issue_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
+                                        axons=[target_axon_issue_sync],
+                                        synapse=sync_issue_synapse,
+                                        timeout=self.query_timeout
+                                    )
+                                    if sync_issue_responses and sync_issue_responses[0].dendrite.status_code == 200 and \
+                                       sync_issue_responses[0].issue_synced_successfully:
+                                        current_round_scores[uid] += 0.1 # Adjusted score
+                                        miner_round_data[uid]['issue_synced_success_by_miner'] = True
+                                        bt.logging.info(f"UID {uid}: Miner successfully synced issue for {repo_to_validate_rid}. Score +0.1")
+                                    else:
+                                        miner_round_data[uid]['issue_synced_success_by_miner'] = False
+                                        error_msg_issue_sync = (sync_issue_responses[0].error_message
+                                                               if sync_issue_responses and sync_issue_responses[0].error_message
+                                                               else "Miner issue sync failed or reported failure.")
+                                        bt.logging.warning(f"UID {uid}: Miner FAILED to sync issue for {repo_to_validate_rid}. Error: {error_msg_issue_sync}")
+                else:
+                            bt.logging.warning(f"Validator: Failed to create issue locally in {operational_clone_path}. Skipping issue sync validation.")
+                        
+                        
+                
+
                 # === Stage 6: Test Repository Unseeding by Miners ===
                 bt.logging.info(f"Validator: Stage 6 - Testing UNSEED_REPO for {repo_to_validate_rid} with miners that allowed initial clone...")
                 for uid in uids_for_targeted_tests: # Iterate through miners who had a node_id
@@ -663,7 +745,7 @@ class Validator:
                         miner_round_data[uid]['unseeding_test_passed'] = unseeding_test_passed
                         if unseeding_test_passed:
                             # Unseeding test passed means re-clone FAILED, which is good.
-                            current_round_scores[uid] += 0.2 # Adjust score as needed
+                            current_round_scores[uid] += 0.1 # Adjust score as needed
                             bt.logging.info(f"UID {uid}: UNSEED_REPO test for {repo_to_validate_rid} SUCCEEDED (re-clone failed). Score +0.15")
                         else:
                             bt.logging.warning(f"UID {uid}: UNSEED_REPO test for {repo_to_validate_rid} FAILED (re-clone succeeded or miner failed unseed cmd).")
