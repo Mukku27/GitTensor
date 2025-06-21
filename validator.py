@@ -330,6 +330,67 @@ class Validator:
         except Exception as e:
             bt.logging.error(f"Validator [_modify_local_repo_and_push]: Exception for {repo_rid_for_logging} in {local_repo_path}: {e}\n{traceback.format_exc()}")
             return False
+    
+    def _create_branch_modify_and_push_from_existing_clone(self, local_repo_path: str, repo_rid_for_logging: str) -> Tuple[bool, Optional[str]]:
+        """
+        Operates on an ALREADY CLONED local repository specified by local_repo_path:
+        1. Creates a new local branch.
+        2. Makes random changes to a file on the new branch.
+        3. Commits these changes.
+        4. Pushes the new branch to Radicle: 'git push -u rad <new-branch-name>'.
+        Returns (True, new_branch_name) on success, (False, None) on failure.
+        Caller is responsible for the cleanup of local_repo_path.
+        """
+        if not os.path.isdir(os.path.join(local_repo_path, ".git")):
+            bt.logging.error(f"Validator [_create_branch_...]: Path {local_repo_path} is not a valid git repository.")
+            return False, None
+
+        bt.logging.info(f"Validator [_create_branch_...]: Operating on existing clone {local_repo_path} for new branch on RID {repo_rid_for_logging}.")
+        new_branch_name = f"feat/val-branch-{uuid.uuid4().hex[:6]}"
+
+        try:
+            # Step 1: Create and checkout new branch (was Step 2)
+            checkout_success, _, stderr_checkout = run_command(f"git checkout -b {new_branch_name}", cwd=local_repo_path)
+            if not checkout_success:
+                bt.logging.error(f"Validator [_create_branch_...]: Failed to create/checkout new branch {new_branch_name} in {local_repo_path}. Stderr: {stderr_checkout}")
+                return False, None
+            bt.logging.info(f"Validator [_create_branch_...]: Created and switched to new branch {new_branch_name} in {local_repo_path}.")
+
+            # Step 2: Make random changes (was Step 3)
+            change_file_path = os.path.join(local_repo_path, f"update_on_branch_{new_branch_name.replace('/', '_')}.txt")
+            with open(change_file_path, "a") as f:
+                f.write(f"\nUpdate on branch {new_branch_name}: {uuid.uuid4()} at {time.time()}")
+            bt.logging.info(f"Validator [_create_branch_...]: Modified {change_file_path} on branch {new_branch_name}.")
+
+            # Step 3: Commit changes (was Step 4)
+            commit_msg = f"Auto update on new branch {new_branch_name} for {repo_rid_for_logging}"
+            run_command("git add .", cwd=local_repo_path)
+            commit_success, _, stderr_commit = run_command(f"git commit -m \"{commit_msg}\"", cwd=local_repo_path)
+            if not commit_success:
+                if "nothing to commit" in stderr_commit.lower() or "no changes added" in stderr_commit.lower():
+                    bt.logging.warning(f"Validator [_create_branch_...]: No new changes to commit on branch {new_branch_name} in {local_repo_path}.")
+                else:
+                    bt.logging.error(f"Validator [_create_branch_...]: Git commit failed for branch {new_branch_name}. Stderr: {stderr_commit}")
+                    return False, new_branch_name # Return branch name even if commit fails, for context
+
+            # Step 4: Push the new branch to Radicle (was Step 5)
+            # Assuming Radicle identity is unlocked (pexpect block for 'rad auth' is still in your _modify_local_repo_and_push)
+            # For consistency, it might be good to have a common "ensure_identity_unlocked" helper or add pexpect here.
+            # For now, proceeding without explicit pexpect for `git push` in this specific function, relying on prior unlocking.
+            bt.logging.info(f"Validator [_create_branch_...]: Pushing new branch {new_branch_name} from {local_repo_path} for {repo_rid_for_logging}.")
+            push_cmd = f"git push -u rad {new_branch_name}" # -u sets upstream
+            push_success, stdout_push, stderr_push = run_command(push_cmd, cwd=local_repo_path)
+            
+            if not push_success:
+                bt.logging.error(f"Validator [_create_branch_...]: Failed to push new branch {new_branch_name}. Stdout: {stdout_push}, Stderr: {stderr_push}")
+                return False, new_branch_name
+            
+            bt.logging.info(f"Validator [_create_branch_...]: Successfully pushed new branch {new_branch_name}. Output: {stdout_push}")
+            return True, new_branch_name
+
+        except Exception as e:
+            bt.logging.error(f"Validator [_create_branch_...]: Exception for {repo_rid_for_logging} in {local_repo_path}: {e}\n{traceback.format_exc()}")
+            return False, new_branch_name
 
     async def test_repository_unseeding(self, repo_rid: str, target_miner_uid: int, target_miner_node_id: str) -> bool:
         """
@@ -543,7 +604,7 @@ class Validator:
                             
                             if sync_changes_responses and sync_changes_responses[0].dendrite.status_code == 200 and \
                                sync_changes_responses[0].changes_synced_successfully:
-                                current_round_scores[uid] += 0.2 # Score for successful sync by miner (0.2)
+                                current_round_scores[uid] += 0.1 # Score for successful sync by miner (0.2)
                                 miner_round_data[uid]['changes_synced_success_by_miner'] = True
                                 bt.logging.info(f"UID {uid}: Miner successfully synced changes for {repo_to_validate_rid}. Score +0.2. Total score for UID: {current_round_scores[uid].item()}")
                             else:
@@ -556,6 +617,36 @@ class Validator:
                             bt.logging.debug(f"UID {uid}: Skipping changes sync test as initial clone or prerequisite step was not successful.")
                 else:
                     bt.logging.warning(f"Validator: Failed to modify and push changes for {repo_to_validate_rid} using path {local_validator_repo_path}. Skipping sync validation for all miners this round.")
+
+                 # === Stage 5.75: Validator Pushes New Branch with Changes, Miner Syncs ===
+                local_repo_path_for_branch_ops=test_dir_path # Use the same local repo path for branch operations
+                if local_repo_path_for_branch_ops: 
+                        bt.logging.info(f"Validator: Stage 5.75 - Testing pushing new branch to {repo_to_validate_rid} via {local_repo_path_for_branch_ops}...")
+                        branch_pushed, pushed_branch_name = self._create_branch_modify_and_push_from_existing_clone(
+                            local_repo_path=local_repo_path_for_branch_ops,
+                            repo_rid_for_logging=repo_to_validate_rid
+                        )
+                        if branch_pushed and pushed_branch_name:
+                            bt.logging.info(f"Validator: New branch '{pushed_branch_name}' pushed. Querying miners to sync.")
+                            for uid in uids_for_targeted_tests:
+                                if miner_round_data[uid].get('validated_push_success', False): 
+                                    sync_branch_synapse = RadicleSubnetSynapse(
+                                        operation_type="VALIDATE_BRANCH_SYNC",
+                                        branch_sync_repo_id=repo_to_validate_rid 
+                                    )
+                                    target_axon_branch_sync = self.metagraph.axons[uid]
+                                    sync_branch_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(axons=[target_axon_branch_sync],synapse=sync_branch_synapse,timeout=self.query_timeout)
+                                    if sync_branch_responses and sync_branch_responses[0].dendrite.status_code == 200 and sync_branch_responses[0].branch_changes_synced_successfully:
+                                        current_round_scores[uid] += 0.1
+                                        bt.logging.info(f"UID {uid}: Miner synced new branch {pushed_branch_name}. Score +0.1")
+                                    elif sync_branch_responses and sync_branch_responses[0].dendrite: # Check if response object exists
+                                        bt.logging.warning(f"UID {uid}: Miner FAILED to sync new branch. Status: {sync_branch_responses[0].dendrite.status_code}, Error: {sync_branch_responses[0].error_message or 'branch_changes_synced_successfully is False'}")
+                                    else: # No response or dendrite object missing
+                                        bt.logging.warning(f"UID {uid}: No response or invalid response for VALIDATE_BRANCH_SYNC from miner.")
+                        else:
+                             bt.logging.warning(f"Validator: Failed to create/push new branch from {local_repo_path_for_branch_ops}.")
+                else:
+                        bt.logging.warning("Validator: Skipping new branch test as no persistent clone path was obtained for modifications.")
 
                 # === Stage 6: Test Repository Unseeding by Miners ===
                 bt.logging.info(f"Validator: Stage 6 - Testing UNSEED_REPO for {repo_to_validate_rid} with miners that allowed initial clone...")
