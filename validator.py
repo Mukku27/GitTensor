@@ -218,7 +218,7 @@ class Validator:
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
 
-    def clone_repository_locally(self, repo_rid: str, miner_node_id: str) -> bool:
+    def clone_repository_locally(self, repo_rid: str, miner_node_id: str):
         """
         Attempts to clone the given Radicle repository into a temporary local directory.
         Returns True if successful, False otherwise.
@@ -244,21 +244,13 @@ class Validator:
 
             if clone_success_flag and os.path.exists(os.path.join(clone_target_dir, ".git")):
                 bt.logging.info(f"Validator successfully cloned RID {repo_rid} to {clone_target_dir}.")
-                return True
+                return {"status":True, "dir":clone_target_dir}
             else:
                 bt.logging.warning(f"Validator failed to clone RID {repo_rid}. Success_flag: {clone_success_flag}, Stdout: '{stdout}', Stderr: '{stderr}'")
-                return False
+                return {"status": False, "dir":""}
         except Exception as e:
             bt.logging.error(f"Exception during validator's local clone operation for {repo_rid}: {e}")
-            return False
-        finally:
-            # Clean up the temporary clone directory
-            if os.path.exists(clone_target_dir):
-                try:
-                    shutil.rmtree(clone_target_dir)
-                    bt.logging.debug(f"Validator successfully removed its temporary clone directory: {clone_target_dir}")
-                except Exception as e:
-                    bt.logging.error(f"Validator error removing its temporary clone directory {clone_target_dir}: {e}")
+            return {"status":False,"dir":""}
    
     def _modify_local_repo_and_push(self, local_repo_path: str, repo_rid_for_logging: str) -> bool:
         """
@@ -302,12 +294,32 @@ class Validator:
 
             # Step 3: Push changes (was Step 4)
             bt.logging.info(f"Validator [_modify_local_repo_and_push]: Pushing changes from {local_repo_path} for {repo_rid_for_logging}.")
-            
+            command = "rad auth"
+            child = pexpect.spawn(command, cwd=local_repo_path, encoding="utf-8", timeout=70)
+            passphrase = "<YOUR_RADICAL_PASSPHRASE>" # Replace with your actual passphrase
+            index = child.expect([
+            re.compile(r'(?i)passphrase.*:', re.IGNORECASE),
+                pexpect.EOF,
+                pexpect.TIMEOUT
+            ])
+            if index == 0:
+                child.sendline(passphrase)
+                child.expect(pexpect.EOF)
+                output = child.before
+                bt.logging.debug(f"Radicle init output (with passphrase): {output}")
+            elif index == 1:
+                # No passphrase prompt; likely already unlocked
+                bt.logging.warning("Passphrase prompt not shown — identity might be already unlocked.")
+                output = child.before
+                bt.logging.debug(f"Radicle init output (no passphrase): {output}")
+            else:
+                raise Exception("Timeout while waiting for rad init to prompt passphrase or complete.")
+
             # `git push rad main` assumes 'rad' remote is set and 'main' is the branch.
             # Radicle also allows `rad push` from within the directory.
             # Using `git push rad main` is more explicit if you want to ensure the `main` branch is pushed.
             push_success, stdout_push, stderr_push = run_command("git push rad main", cwd=local_repo_path)
-            
+            bt.logging.info(f"success {push_success} out {stdout_push} err {stderr_push}")
             if not push_success:
                 bt.logging.error(f"Validator [_modify_local_repo_and_push]: Failed to push changes for {repo_rid_for_logging} from {local_repo_path}. Stdout: {stdout_push}, Stderr: {stderr_push}")
                 return False
@@ -477,7 +489,8 @@ class Validator:
                     else:
                         miner_round_data[uid]['validate_push_success'] = False
                         bt.logging.warning(f"UID {uid}: No response or transport error for VALIDATE_PUSH.")
-
+                
+                test_dir_path = ""
                 # === Stage 5: Initial Clone Test by Validator ===
                 bt.logging.info(f"Validator: Stage 5 - Testing initial clone of {repo_to_validate_rid} from miners with node_id...")
                 for uid in uids_for_targeted_tests:
@@ -486,7 +499,8 @@ class Validator:
                         bt.logging.info(f"Validator: UID {uid} has node_id {miner_node_id}. Attempting initial clone.")
                         
                         initial_clone_successful = self.clone_repository_locally(repo_to_validate_rid, miner_node_id)
-                        miner_round_data[uid]['initial_clone_success'] = initial_clone_successful
+                        miner_round_data[uid]['initial_clone_success'] = initial_clone_successful['status']
+                        test_dir_path = initial_clone_successful['dir']
                         if initial_clone_successful:
                             current_round_scores[uid] += 0.2 # Clone score component
                             bt.logging.info(f"UID {uid}: Initial clone test for {repo_to_validate_rid} SUCCEEDED. Score +0.3")
@@ -498,30 +512,34 @@ class Validator:
 
                 # === NEW STAGE 5.5: Validator Pushes Changes, Miner Syncs ===
                 bt.logging.info(f"Validator: Stage 5.5 - Testing pushing changes to {repo_to_validate_rid} and miner sync...")
-                
+                bt.logging.info(f"Validator: Using local repo path {test_dir_path} for pushing changes to {repo_to_validate_rid}.")
                 # Validator makes changes and pushes them using the refactored helper
                 # This uses the `local_validator_repo_path` obtained in Stage 1.
                 changes_pushed_by_validator = self._modify_local_repo_and_push(
-                    local_repo_path=local_validator_repo_path,
+                    local_repo_path=test_dir_path,
                     repo_rid_for_logging=repo_to_validate_rid
                 )
 
                 if changes_pushed_by_validator:
-                    bt.logging.info(f"Validator: Successfully pushed changes to {repo_to_validate_rid} from its local repo {local_validator_repo_path}.")
+                    bt.logging.info(f"Validator: Successfully pushed changes to {repo_to_validate_rid} from its local repo {test_dir_path}.")
                     # Now, for each eligible miner, ask them to sync these changes
                     for uid in uids_for_targeted_tests: # Iterate miners who have a node_id and passed initial clone
                         if miner_round_data[uid].get('initial_clone_success', False): 
                             bt.logging.info(f"Validator: Asking UID {uid} to sync changes for {repo_to_validate_rid}.")
                             sync_changes_synapse = RadicleSubnetSynapse(
                                 operation_type="VALIDATE_CHANGES_SYNC",
-                                repo_rid=repo_to_validate_rid
+                                repo_sync_rid=repo_to_validate_rid,
+                                
                             )
-                            target_axon_sync = self.metagraph.axons[uid]
+                            target_axon_sync = [self.metagraph.axons[uid] for uid in available_uids]
                             sync_changes_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
-                                axons=[target_axon_sync], 
+                                axons=target_axon_sync, 
                                 synapse=sync_changes_synapse,
-                                timeout=self.query_timeout 
+                                timeout=self.query_timeout,
+                                
                             )
+
+                            bt.logging.info(f"Validator: Received sync responses for {repo_to_validate_rid} from UID {uid}.")
                             
                             if sync_changes_responses and sync_changes_responses[0].dendrite.status_code == 200 and \
                                sync_changes_responses[0].changes_synced_successfully:

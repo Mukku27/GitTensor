@@ -28,6 +28,7 @@ class RadicleSubnetSynapse(bt.Synapse):
     # For "VALIDATE_PUSH" operation
     repo_rid: Optional[str] = None
     commit_hash: Optional[str] = None
+    repo_sync_rid: Optional[str] = None
 
     # --- Miner-filled response fields ---
     # For "VALIDATE_PUSH" response
@@ -67,6 +68,8 @@ class RadicleSubnetSynapse(bt.Synapse):
         if self.commit_hash is not None:
             fields.append("commit_hash")
         
+        if self.repo_sync_rid is not None:
+            fields.append("repo_sync_rid")
         #Add unseed_command_successful to hashed fields if present
         if self.unseed_command_successful is not None:
             fields.append("unseed_command_successful")
