@@ -365,6 +365,38 @@ class Miner:
                 synapse.error_message = f"rad sync command (for issue) failed: {stderr_sync or stdout_sync}"
             return synapse
         
+        elif synapse.operation_type == "VALIDATE_PATCH_SYNC":
+            rid_to_sync_patch = synapse.patch_sync_repo_id
+            bt.logging.info(f"Miner: VALIDATE_PATCH_SYNC request for RID: {rid_to_sync_patch}")
+
+            if not rid_to_sync_patch:
+                synapse.status_message = "FAILURE"
+                synapse.error_message = "patch_sync_repo_id (or repo_rid) not provided for VALIDATE_PATCH_SYNC"
+                synapse.patch_synced_successfully = False
+                return synapse
+
+            # Miner attempts to sync the repository to get the new patch
+            sync_success, stdout_sync, stderr_sync = run_command(f"rad sync {rid_to_sync_patch} --fetch")
+            
+            if sync_success:
+                # Check for general sync success messages. 
+                # Specific patch confirmation is harder without knowing the patch COB ID.
+                if "✓ Synced" in stdout_sync or "up to date" in stdout_sync.lower() or "nothing to sync" in stdout_sync.lower() or "✓ Project data fetched" in stdout_sync:
+                    bt.logging.info(f"Miner: Successfully ran 'rad sync {rid_to_sync_patch}' (for patch). Output: {stdout_sync}")
+                    synapse.patch_synced_successfully = True
+                    synapse.status_message = "SUCCESS"
+                else:
+                    bt.logging.warning(f"Miner: 'rad sync {rid_to_sync_patch}' (for patch) ran, but success message not clearly found. Stdout: {stdout_sync}, Stderr: {stderr_sync}")
+                    synapse.patch_synced_successfully = False
+                    synapse.status_message = "FAILURE"
+                    synapse.error_message = f"Patch sync command output did not confirm full sync success. Output: {stdout_sync}"
+            else:
+                bt.logging.warning(f"Miner: Failed to execute 'rad sync {rid_to_sync_patch}' (for patch). Stderr: {stderr_sync}, Stdout: {stdout_sync}")
+                synapse.patch_synced_successfully = False
+                synapse.status_message = "FAILURE"
+                synapse.error_message = f"rad sync command (for patch) failed: {stderr_sync or stdout_sync}"
+            return synapse
+        
         elif synapse.operation_type == "UNSEED_REPO":
             if not synapse.repo_rid:
                 synapse.status_message = "FAILURE"
