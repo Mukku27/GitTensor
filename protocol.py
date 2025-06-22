@@ -45,6 +45,7 @@ class RadicleSubnetSynapse(bt.Synapse):
     unseed_command_successful: Optional[bool] = None  #For UNSEED_REPO response
 
     issue_synced_successfully: Optional[bool] = None 
+    patch_synced_successfully: Optional[bool] = None  # For VALIDATE_PATCH_SYNC response
 
     patch_sync_repo_id: Optional[str] = None 
 

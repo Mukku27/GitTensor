@@ -366,7 +366,7 @@ class Miner:
             return synapse
         
         elif synapse.operation_type == "VALIDATE_PATCH_SYNC":
-            rid_to_sync_patch = synapse.patch_sync_repo_id 
+            rid_to_sync_patch = synapse.patch_sync_repo_id
             bt.logging.info(f"Miner: VALIDATE_PATCH_SYNC request for RID: {rid_to_sync_patch}")
 
             if not rid_to_sync_patch:

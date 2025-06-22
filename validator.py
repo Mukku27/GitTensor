@@ -814,15 +814,15 @@ class Validator:
                 if patch_pushed and pushed_patch_ref_name:
                             bt.logging.info(f"Validator: Patch '{pushed_patch_ref_name}' pushed for {repo_to_validate_rid}. Querying miners to sync.")
                             for uid in uids_for_targeted_tests:
-                                if miner_round_data[uid].get('validated_push_success', False): # Prerequisite
+                                if miner_round_data[uid]:
                                     sync_patch_synapse = RadicleSubnetSynapse(
                                         operation_type="VALIDATE_PATCH_SYNC",
                                         patch_sync_repo_id=repo_to_validate_rid # Send the project RID
                                         # Optionally, could send pushed_patch_ref_name if miner were to verify specific patch
                                     )
-                                    target_axon_patch_sync = self.metagraph.axons[uid]
+                                    target_axon_patch_sync = [self.metagraph.axons[uid] for uid in available_uids]
                                     sync_patch_responses: List[RadicleSubnetSynapse] = await self.dendrite.forward(
-                                        axons=[target_axon_patch_sync],
+                                        axons=target_axon_patch_sync,
                                         synapse=sync_patch_synapse,
                                         timeout=self.query_timeout
                                     )
