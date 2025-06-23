@@ -5,15 +5,24 @@ GitTensor is a decentralized GitHub-equivalent built as a subnet on the [BitTens
 Built for the next generation of open-source collaboration, GitTensor removes central intermediaries while preserving the familiar workflows of GitHub.
 
 
-### TODO
+### TODO(Radicle)
 - [x] Miner and  validator installation  and intialisation of the Radicle CLI
 - [x] Miner running seed node
 - [x] Validator creating repos and miner storing in the node
 - [x]  Pushing chnages to the Existing Repositiry(need to be test with miner and validator in different machines in real time )
 - [x]  Cloning from the repo from the Seed node of the miner(need to be test with miner and validator in different machines in real time )
-- [ ]  pulling from the repo
+- [x]  pulling from the repo
 - [x]  Creating new branch (need to be test with miner and validator in different machines in real time ) and deletion happening through the repo deletion
-- [ ]  issues of the repo
-- [ ]  PR  of the repo
+- [x]  issues of the repo
+- [x]  PR(patch in the  radicle)  of the repo
 - [x]  deletion of the repo
+---
+
+### TODO(Bittensor)
+- [x] Basic Miner working
+- [x] Basic Validator Working
+- [ ] Migrate this  three file codebase to  bigger codebase structure
+- [ ] testing the migrated codebase 
+- [ ] Emissions and incentives(not working now )
+
 ---
