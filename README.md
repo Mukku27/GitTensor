@@ -16,6 +16,50 @@ Built for the next generation of open-source collaboration, GitTensor removes ce
 -   `neurons/`: Entry points for running miners and validators.
 
 
+gittensor/
+├── README.md
+├── LICENSE
+├── requirements.txt
+├── setup.py
+├── contrib/
+│   ├── CODE_REVIEW_DOCS.md
+│   ├── CONTRIBUTING.md
+│   ├── DEVELOPMENT_WORKFLOW.md
+│   └── STYLE.md
+├── docs/
+│   ├── running_on_mainnet.md
+│   ├── running_on_staging.md
+│   ├── running_on_testnet.md
+│   └── what_are_subnets.md
+├── gittensor/
+│   ├── __init__.py
+│   ├── protocol.py
+│   ├── base/
+│   │   ├── __init__.py
+│   │   ├── miner.py
+│   │   ├── neuron.py
+│   │   └── validator.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── config.py
+│   │   ├── radicle_utils.py
+│   │   └── uids.py
+│   └── validator_logic/
+│       ├── __init__.py
+│       ├── repo_operations.py
+│       └── reward.py
+├── neurons/
+│   ├── __init__.py
+│   ├── miner.py
+│   └── validator.py
+├── scripts/
+│   ├── check_compatibility.sh
+│   └── check_requirements_changes.sh
+└── tests/
+    └── test_template_validator.py
+
+
+
 ### TODO(Radicle)
 - [x] Miner and  validator installation  and intialisation of the Radicle CLI
 - [x] Miner running seed node
