@@ -1,2 +1,4 @@
 bittensor
 pexpect
+torch
+loguru==0.7.3
