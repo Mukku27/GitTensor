@@ -5,6 +5,17 @@ GitTensor is a decentralized GitHub-equivalent built as a subnet on the [BitTens
 Built for the next generation of open-source collaboration, GitTensor removes central intermediaries while preserving the familiar workflows of GitHub.
 
 
+
+## Structure
+
+-   `gittensor/`: Contains the core logic.
+    -   `protocol.py`: Defines the Bittensor synapse for communication.
+    -   `base/`: Base classes for neurons (miner, validator).
+    -   `utils/`: Utility functions, including Radicle CLI interactions and Bittensor configurations.
+    -   `validator_logic/`: Specific validation sequences performed by the validator.
+-   `neurons/`: Entry points for running miners and validators.
+
+
 ### TODO(Radicle)
 - [x] Miner and  validator installation  and intialisation of the Radicle CLI
 - [x] Miner running seed node
