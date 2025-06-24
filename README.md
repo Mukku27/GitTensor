@@ -1,10 +1,10 @@
 # GitTensor
-
+---
 GitTensor is a decentralized GitHub-equivalent built as a subnet on the [BitTensor](https://bittensor.com) network. It allows developers to host, push, pull, and merge Git repositories in a fully decentralized, incentivized, and fault-tolerant manner — powered by miners and validators.
 
 Built for the next generation of open-source collaboration, GitTensor removes central intermediaries while preserving the familiar workflows of GitHub.
 
-
+---
 
 ## Structure
 
@@ -16,7 +16,12 @@ Built for the next generation of open-source collaboration, GitTensor removes ce
 -   `neurons/`: Entry points for running miners and validators.
 
 
-gittensor/
+
+
+### Full Directory Tree
+
+```
+mukku27-gittensor/
 ├── README.md
 ├── LICENSE
 ├── requirements.txt
@@ -57,7 +62,10 @@ gittensor/
 │   └── check_requirements_changes.sh
 └── tests/
     └── test_template_validator.py
+```
 
+
+---
 
 
 ### TODO(Radicle)
