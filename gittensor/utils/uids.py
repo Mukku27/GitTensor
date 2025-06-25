@@ -1,44 +1,63 @@
 import torch
 import random
 import bittensor as bt
-from typing import List, TYPE_CHECKING
+from typing import List
 
-if TYPE_CHECKING:
-    from gittensor.base.neuron import BaseNeuron # For type hinting
 
 def check_uid_availability(
-    metagraph: "bt.metagraph.Metagraph", uid: int, vpermit_tao_limit: int = 1024
+    metagraph: "bt.metagraph.Metagraph", uid: int, vpermit_tao_limit: int
 ) -> bool:
+    """Check if uid is available. The UID should be available if it is serving and has less than vpermit_tao_limit stake
+    Args:
+        metagraph (:obj: bt.metagraph.Metagraph): Metagraph object
+        uid (int): uid to be checked
+        vpermit_tao_limit (int): Validator permit tao limit
+    Returns:
+        bool: True if uid is available, False otherwise
+    """
+    # Filter non serving axons.
     if not metagraph.axons[uid].is_serving:
         return False
-    # Example for validator permit check (if applicable, adjust for your subnet's needs)
-    # if metagraph.validator_permit[uid] and metagraph.S[uid] < vpermit_tao_limit:
-    #     return False
+    # Filter validator permit > 1024 stake.
+    if metagraph.validator_permit[uid]:
+        if metagraph.S[uid] > vpermit_tao_limit:
+            return False
+    # Available otherwise.
     return True
 
-def get_available_uids(
-    neuron: "BaseNeuron", 
-    k: int, 
-    exclude_uids: List[int] = None
+
+def get_random_uids(
+    self, k: int, exclude: List[int] = None
 ) -> torch.LongTensor:
-    if exclude_uids is None:
-        exclude_uids = []
+    """Returns k available random uids from the metagraph.
+    Args:
+        k (int): Number of uids to return.
+        exclude (List[int]): List of uids to exclude from the random sampling.
+    Returns:
+        uids (torch.LongTensor): Randomly sampled available uids.
+    Notes:
+        If `k` is larger than the number of available `uids`, set `k` to the number of available `uids`.
+    """
+    candidate_uids = []
+    avail_uids = []
 
-    # Ensure the neuron's own UID is in the exclusion list if it's a validator querying others
-    if hasattr(neuron, 'uid') and neuron.uid not in exclude_uids:
-        exclude_uids.append(neuron.uid)
+    for uid in range(self.metagraph.n.item()):
+        uid_is_available = check_uid_availability(
+            self.metagraph, uid, self.config.neuron.vpermit_tao_limit
+        )
+        uid_is_not_excluded = exclude is None or uid not in exclude
 
-    available_axon_uids = []
-    for uid_check in range(neuron.metagraph.n.item()):
-        if uid_check not in exclude_uids:
-            # Using basic check_uid_availability; can be expanded
-            if check_uid_availability(neuron.metagraph, uid_check): 
-                available_axon_uids.append(uid_check)
+        if uid_is_available:
+            avail_uids.append(uid)
+            if uid_is_not_excluded:
+                candidate_uids.append(uid)
 
-    if not available_axon_uids:
-        return torch.LongTensor([])
-
-    num_to_sample = min(k, len(available_axon_uids))
-    sampled_uids = random.sample(available_axon_uids, num_to_sample)
-    
-    return torch.LongTensor(sampled_uids)
+    # Check if candidate_uids contain enough for querying, if not grab all avaliable uids
+    available_uids = candidate_uids
+    if len(candidate_uids) < k:
+        available_uids += random.sample(
+            [uid for uid in avail_uids if uid not in candidate_uids],
+            k - len(candidate_uids),
+        )
+    uids = torch.tensor(random.sample(available_uids, k))
+    return uids
