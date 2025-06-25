@@ -1,3 +1,4 @@
 from . import config
 from . import uids
-from . import radicle_utils
+from . import misc
+from . import rad_utils
