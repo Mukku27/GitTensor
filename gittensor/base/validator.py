@@ -1,268 +1,336 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
+
 import copy
 import torch
 import asyncio
 import threading
-import time # Added import
-import traceback # Added import
 import bittensor as bt
+
 from typing import List
-from abc import abstractmethod # Added import
 from traceback import print_exception
 
 from gittensor.base.neuron import BaseNeuron
-# from gittensor.utils.uids import get_random_uids # If used, ensure this exists
+
 
 class BaseValidatorNeuron(BaseNeuron):
-    """ Base class for GitTensor Validators. """
+    """
+    Base class for Bittensor validators. Your validator should inherit from this class.
+    """
 
     def __init__(self, config=None):
         super().__init__(config=config)
 
+        # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+
+        # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = bt.dendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
-        self.scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32).to(self.device)
-        self.moving_avg_scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32).to(self.device)
-        self.alpha = self.config.validator.get('alpha', 0.05) # Use validator.alpha from config
+        # Set up initial scoring weights for validation
+        bt.logging.info("Building validation weights.")
+        self.scores = torch.zeros_like(torch.tensor(self.metagraph.S), dtype=torch.float32)
 
-        self.sync() 
 
-        if not self.config.validator.get('axon_off', False):
+        # Init sync with the network. Updates the metagraph.
+        self.sync()
+
+        # Serve axon to enable external connections.
+        if not self.config.neuron.axon_off:
             self.serve_axon()
         else:
-            bt.logging.warning("Validator axon is off, not serving IP to chain.")
+            bt.logging.warning("axon off, not serving ip to chain.")
 
-        # Attempt to get existing loop or create a new one
-        try:
-            self.loop = asyncio.get_event_loop()
-            if self.loop.is_closed():
-                raise RuntimeError("Event loop is closed")
-        except RuntimeError:
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-        
+        # Create asyncio event loop to manage async tasks.
+        self.loop = asyncio.get_event_loop()
+
+        # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
 
     def serve_axon(self):
-        bt.logging.info("Serving validator axon to chain...")
+        """Serve axon to enable external connections."""
+
+        bt.logging.info("serving ip to chain...")
         try:
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
-            
-            # Attach dummy forward, blacklist, priority functions if required by axon.serve()
-            # or ensure the concrete validator attaches its own.
-            # For a validator axon primarily for serving IP, these might not be critical
-            # if no actual synapses are handled by it.
-            async def dummy_forward(synapse: bt.Synapse) -> bt.Synapse: return synapse
-            def dummy_blacklist(synapse: bt.Synapse) -> tuple[bool, str]: return False, "allowed"
-            def dummy_priority(synapse: bt.Synapse) -> float: return 0.0
 
-            self.axon.attach(dummy_forward, dummy_blacklist, dummy_priority)
-            
-            self.subtensor.serve_axon(
-                netuid=self.config.netuid,
-                axon=self.axon,
-            )
-            self.axon.start() # Start axon serving
-            bt.logging.info(f"Validator axon served and started: {self.axon}")
+            try:
+                self.subtensor.serve_axon(
+                    netuid=self.config.netuid,
+                    axon=self.axon,
+                )
+            except Exception as e:
+                bt.logging.error(f"Failed to serve Axon with exception: {e}")
+                pass
+
         except Exception as e:
-            bt.logging.error(f"Failed to serve validator Axon: {e}\n{traceback.format_exc()}")
+            bt.logging.error(
+                f"Failed to create Axon initialize with exception: {e}"
+            )
+            pass
 
     async def concurrent_forward(self):
-        # This is a placeholder. GitTensor validator uses run_sync_loop.
-        num_concurrent = self.config.validator.get('num_concurrent_forwards', 1)
-        coroutines = [self.forward() for _ in range(num_concurrent)] 
+        coroutines = [
+            self.forward()
+            for _ in range(self.config.neuron.num_concurrent_forwards)
+        ]
         await asyncio.gather(*coroutines)
 
-    def base_run(self):
+    def run(self):
+        """
+        Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
+
+        This function performs the following primary tasks:
+        1. Check for registration on the Bittensor network.
+        2. Continuously forwards queries to the miners on the network, rewarding their responses and updating the scores accordingly.
+        3. Periodically resynchronizes with the chain; updating the metagraph with the latest network state and setting weights.
+
+        The essence of the validator's operations is in the forward function, which is called every step. The forward function is responsible for querying the network and scoring the responses.
+
+        Note:
+            - The function leverages the global configurations set during the initialization of the miner.
+            - The miner's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
+
+        Raises:
+            KeyboardInterrupt: If the miner is stopped by a manual interruption.
+            Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
+        """
+
+        # Check that validator is registered on the network.
         self.sync()
+
         bt.logging.info(
-            f"Running validator (UID: {self.uid}) on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
+            f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
         )
-        bt.logging.info(f"Validator starting at block: {self.current_block}")
 
+        bt.logging.info(f"Validator starting at block: {self.block}")
+
+        # This loop maintains the validator's operations until intentionally stopped.
         try:
-            while not self.should_exit:
-                bt.logging.debug(f"Validator {self.uid} run loop. Step: {self.step}, Block: {self.current_block}")
-                
-                try:
-                    if self.loop.is_closed(): # Ensure loop is open before running
-                        asyncio.set_event_loop(asyncio.new_event_loop())
-                        self.loop = asyncio.get_event_loop()
-                    
-                    # Ensure run_sync_loop is awaited properly
-                    # Check if run_sync_loop is an async def, then use loop.run_until_complete
-                    if asyncio.iscoroutinefunction(self.run_sync_loop):
-                        self.loop.run_until_complete(self.run_sync_loop())
-                    else:
-                        # If run_sync_loop is not async, but the logic inside might be,
-                        # this part needs careful review. For now, assume it's designed to be run like this.
-                        # Or, it could be a synchronous method that internally manages async operations.
-                        bt.logging.warning("run_sync_loop is not an async function, calling it directly.")
-                        self.run_sync_loop() # Call directly if not async
+            while True:
+                bt.logging.info(f"step({self.step}) block({self.block})")
 
-                except Exception as e:
-                    bt.logging.error(f"Error in validator's run_sync_loop execution: {e}")
-                    traceback.print_exc()
-                    time.sleep(self.config.validator.get('error_sleep_time', 60))
+                # Run multiple forwards concurrently.
+                self.loop.run_until_complete(self.concurrent_forward())
 
+                # Check if we should exit.
+                if self.should_exit:
+                    break
 
-                if self.should_exit: break
-                self.sync() 
+                # Sync metagraph and potentially set weights.
+                self.sync()
+
                 self.step += 1
-                
-                time.sleep(self.config.validator.get('loop_interval', 60)) # Default loop interval
 
+        # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
+            self.axon.stop()
             bt.logging.success("Validator killed by keyboard interrupt.")
-            if hasattr(self, 'axon') and self.axon and self.axon.is_serving: self.axon.stop()
-        except Exception as err:
-            bt.logging.error(f"Error during validation run: {err}")
-            bt.logging.debug(print_exception(type(err), err, err.__traceback__))
-        finally:
-            if hasattr(self, 'axon') and self.axon and self.axon.is_serving:
-                self.axon.stop()
-            bt.logging.info("Exiting validator.")
+            exit()
 
+        # In case of unforeseen errors, the validator will log the error and continue operations.
+        except Exception as err:
+            bt.logging.error("Error during validation", str(err))
+            bt.logging.debug(
+                print_exception(type(err), err, err.__traceback__)
+            )
 
     def run_in_background_thread(self):
+        """
+        Starts the validator's operations in a background thread upon entering the context.
+        This method facilitates the use of the validator in a 'with' statement.
+        """
         if not self.is_running:
             bt.logging.debug("Starting validator in background thread.")
             self.should_exit = False
-            self.thread = threading.Thread(target=self.base_run, daemon=True)
+            self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
             self.is_running = True
-            bt.logging.debug("Validator started in background.")
+            bt.logging.debug("Started")
 
     def stop_run_thread(self):
+        """
+        Stops the validator's operations that are running in the background thread.
+        """
         if self.is_running:
-            bt.logging.debug("Stopping validator background thread.")
+            bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
-            if self.thread and self.thread.is_alive():
-                 self.thread.join(timeout=15)
+            self.thread.join(5)
             self.is_running = False
-            bt.logging.debug("Validator background thread stopped.")
+            bt.logging.debug("Stopped")
 
     def __enter__(self):
         self.run_in_background_thread()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback_obj):
-        self.stop_run_thread()
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Stops the validator's background operations upon exiting the context.
+        This method facilitates the use of the validator in a 'with' statement.
 
-    def should_set_weights(self) -> bool:
-        if self.config.validator.get('disable_set_weights', False):
-            return False
-        return (self.current_block - self.metagraph.last_update[self.uid]) > self.config.neuron.get('epoch_length', 100)
-
+        Args:
+            exc_type: The type of the exception that caused the context to be exited.
+                      None if the context was exited without an exception.
+            exc_value: The instance of the exception that caused the context to be exited.
+                       None if the context was exited without an exception.
+            traceback: A traceback object encoding the stack trace.
+                       None if the context was exited without an exception.
+        """
+        if self.is_running:
+            bt.logging.debug("Stopping validator in background thread.")
+            self.should_exit = True
+            self.thread.join(5)
+            self.is_running = False
+            bt.logging.debug("Stopped")
 
     def set_weights(self):
-        try:
-            if torch.all(self.moving_avg_scores == 0): # Check if all scores are zero
-                bt.logging.info("All moving_avg_scores are zero. Attempting to set zero weights.")
-                # If you want to set zero weights, create a tensor of zeros.
-                # Otherwise, this might result in an error or no weights being set.
-                # For now, let's proceed and see how subtensor.set_weights handles it.
-                # Or, explicitly skip if no scores to set.
-                # return # Optionally skip if no scores to set or all are zero.
+        """
+        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
+        """
 
-            if torch.isnan(self.moving_avg_scores).any():
-                bt.logging.warning(f"Scores for weights contain NaN values. Replacing with 0. Scores: {self.moving_avg_scores}")
-                self.moving_avg_scores = torch.nan_to_num(self.moving_avg_scores, 0.0)
-
-            # Normalize scores to get weights
-            if torch.sum(self.moving_avg_scores) == 0: # If all scores are zero after NaN replacement
-                raw_weights = torch.zeros_like(self.moving_avg_scores)
-                bt.logging.info("All scores are zero, setting zero weights.")
-            else:
-                raw_weights = torch.nn.functional.normalize(self.moving_avg_scores, p=1, dim=0)
-            
-            bt.logging.trace("Raw weights for chain:", raw_weights)
-
-            processed_weight_uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
-                uids=self.metagraph.uids.to(self.device),
-                weights=raw_weights.to(self.device),    
-                netuid=self.config.netuid,
-                subtensor=self.subtensor,
-                metagraph=self.metagraph
+        # Check if self.scores contains any NaN values and log a warning if it does.
+        if torch.isnan(self.scores).any():
+            bt.logging.warning(
+                f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
-            bt.logging.info(f"Processed UIDs for weights: {processed_weight_uids.tolist()}")
-            bt.logging.info(f"Processed weights for chain: {processed_weights.tolist()}")
 
-            success = self.subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.config.netuid,
-                uids=processed_weight_uids,
-                weights=processed_weights,
-                wait_for_finalization=False, 
-                version_key=self.spec_version,
-            )
-            if success:
-                bt.logging.info("Successfully set weights.")
-            else:
-                bt.logging.error("Failed to set weights.")
-        except Exception as e:
-            bt.logging.error(f"Error setting weights: {e}\n{traceback.format_exc()}")
+        # Calculate the average reward for each uid across non-zero values.
+        # Replace any NaN values with 0.
+        raw_weights = torch.nn.functional.normalize(self.scores, p=1, dim=0)
+        bt.logging.trace("raw_weights", raw_weights)
+        bt.logging.trace("top10 values", raw_weights.sort()[0])
+        bt.logging.trace("top10 uids", raw_weights.sort()[1])
 
+        # Process the raw weights to final_weights via subtensor limitations.
+        (
+            processed_weight_uids,
+            processed_weights,
+        ) = bt.utils.weight_utils.process_weights_for_netuid(
+            uids=self.metagraph.uids,
+            weights=raw_weights,
+            netuid=self.config.netuid,
+            subtensor=self.subtensor,
+            metagraph=self.metagraph,
+        )
+        bt.logging.trace("processed_weights", processed_weights)
+        bt.logging.trace("processed_weight_uids", processed_weight_uids)
+
+        # Set the weights on chain via our subtensor connection.
+        self.subtensor.set_weights(
+            wallet=self.wallet,
+            netuid=self.config.netuid,
+            uids=processed_weight_uids,
+            weights=processed_weights,
+            wait_for_finalization=False,
+            version_key=self.spec_version,
+        )
+
+        bt.logging.info(f"Set weights: {processed_weights}")
 
     def resync_metagraph(self):
-        bt.logging.info("Resyncing metagraph for validator.")
-        previous_hotkeys = copy.deepcopy(self.metagraph.hotkeys)
-        
-        super().resync_metagraph() # Call base neuron's resync
+        """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
+        bt.logging.info("resync_metagraph()")
 
-        if previous_hotkeys != self.metagraph.hotkeys:
-            bt.logging.info("Metagraph hotkeys changed. Re-initializing scores and hotkey list.")
-            self.hotkeys = copy.deepcopy(self.metagraph.hotkeys) # Update local hotkey list
+        # Copies state of metagraph before syncing.
+        previous_metagraph = copy.deepcopy(self.metagraph)
+
+        # Sync the metagraph.
+        self.metagraph.sync(subtensor=self.subtensor)
+
+        # Check if the metagraph axon info has changed.
+        if previous_metagraph.axons == self.metagraph.axons:
+            return
+
+        bt.logging.info(
+            "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
+        )
+        # Zero out all hotkeys that have been replaced.
+        for uid, hotkey in enumerate(self.hotkeys):
+            if hotkey != self.metagraph.hotkeys[uid]:
+                self.scores[uid] = 0  # hotkey has been replaced
+
+        # Check to see if the metagraph has changed size.
+        # If so, we need to add new hotkeys and moving averages.
+        if len(self.hotkeys) < len(self.metagraph.hotkeys):
+            # Update the size of the moving average scores.
+            new_moving_average = torch.zeros((self.metagraph.n)).to(
+                self.device
+            )
+            min_len = min(len(self.hotkeys), len(self.scores))
+            new_moving_average[:min_len] = self.scores[:min_len]
+            self.scores = new_moving_average
+
+        # Update the hotkeys.
+        self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+
+    def update_scores(self, rewards: torch.FloatTensor, uids: List[int]):
+        """Performs exponential moving average on the scores based on the rewards received from the miners."""
+
+        # Check if rewards contains NaN values.
+        if torch.isnan(rewards).any():
+            bt.logging.warning(f"NaN values detected in rewards: {rewards}")
+            # Replace any NaN values in rewards with 0.
+            rewards = torch.nan_to_num(rewards, 0)
             
-            # Reinitialize scores based on the new metagraph size/structure
-            new_scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32).to(self.device)
-            new_moving_avg_scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32).to(self.device)
-            
-            # Preserve scores for UIDs that still exist if possible (more complex logic)
-            # For simplicity, we'll reinitialize. If fine-grained preservation is needed:
-            # You'd map old UIDs to new UIDs if the hotkey still exists.
-            
-            self.scores = new_scores
-            self.moving_avg_scores = new_moving_avg_scores
-            bt.logging.info(f"Scores re-initialized for {self.metagraph.n.item()} UIDs.")
+        if isinstance(uids, torch.Tensor):
+            uids_tensor = uids.clone().detach()
         else:
-            bt.logging.info("Metagraph resynced, hotkeys unchanged.")
+            uids_tensor = torch.tensor(uids).to(self.device)    
 
+        # Compute forward pass rewards, assumes uids are mutually exclusive.
+        # shape: [ metagraph.n ]
+        scattered_rewards: torch.FloatTensor = self.scores.scatter(
+            0, uids_tensor, rewards
+        ).to(self.device)
+        bt.logging.debug(f"Scattered rewards: {rewards}")
 
-    def update_scores_for_uids(self, uids_to_update: List[int], round_scores_for_uids: torch.Tensor):
-        if not isinstance(uids_to_update, list) or not all(isinstance(uid, int) for uid in uids_to_update):
-            bt.logging.error("uids_to_update must be a list of integers.")
-            return
-        if not isinstance(round_scores_for_uids, torch.Tensor) or round_scores_for_uids.ndim != 1:
-            bt.logging.error("round_scores_for_uids must be a 1D torch.Tensor.")
-            return
-        if len(uids_to_update) != round_scores_for_uids.size(0):
-            bt.logging.error(f"Mismatch in lengths: uids_to_update ({len(uids_to_update)}) and round_scores_for_uids ({round_scores_for_uids.size(0)})")
-            return
+        # Update scores with rewards produced by this step.
+        # shape: [ metagraph.n ]
+        alpha: float = self.config.neuron.moving_average_alpha
+        self.scores: torch.FloatTensor = alpha * scattered_rewards + (
+            1 - alpha
+        ) * self.scores.to(self.device)
+        bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
-        scattered_scores = torch.zeros(self.metagraph.n.item(), dtype=torch.float32).to(self.device)
-        valid_uids_tensor = torch.tensor(uids_to_update, dtype=torch.long).to(self.device)
-        
-        # Ensure round_scores_for_uids is on the correct device
-        round_scores_for_uids_device = round_scores_for_uids.to(self.device)
+    def save_state(self):
+        """Saves the state of the validator to a file."""
+        bt.logging.info("Saving validator state.")
 
-        # Scatter the round scores to their respective UID positions
-        scattered_scores.scatter_(0, valid_uids_tensor, round_scores_for_uids_device)
+        # Save the state of the validator to file.
+        torch.save(
+            {
+                "step": self.step,
+                "scores": self.scores,
+                "hotkeys": self.hotkeys,
+            },
+            self.config.neuron.full_path + "/state.pt",
+        )
 
-        # Update moving average scores
-        self.moving_avg_scores = (1 - self.alpha) * self.moving_avg_scores + self.alpha * scattered_scores
-        
-        bt.logging.debug(f"Updated moving_avg_scores for UIDs {uids_to_update}. Current averages for these UIDs: {self.moving_avg_scores[uids_to_update]}")
+    def load_state(self):
+        """Loads the state of the validator from a file."""
+        bt.logging.info("Loading validator state.")
 
-
-    @abstractmethod
-    async def forward(self): # As per your structure, though run_sync_loop is primary
-        ...
-    
-    @abstractmethod
-    async def run_sync_loop(self): # This is the main async validation driver
-        ...
+        # Load the state of the validator from file.
+        state = torch.load(self.config.neuron.full_path + "/state.pt")
+        self.step = state["step"]
+        self.scores = state["scores"]
+        self.hotkeys = state["hotkeys"]
