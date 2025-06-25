@@ -1,9 +1,9 @@
 
 import bittensor as bt
-from typing import Optional, List, ClassVar, Dict 
-from pydantic import Field 
+from typing import Optional, List 
 
-class RadicleGittensorSynapse(bt.Synapse):
+
+class RadicleSubnetSynapse(bt.Synapse):
     """
     A Synapse for the Radicle GitTensor Subnet.
     Used for operations related to decentralized git repository hosting.
@@ -32,7 +32,7 @@ class RadicleGittensorSynapse(bt.Synapse):
     is_miner_radicle_node_running: Optional[bool] = None
     seeded_rids_count: Optional[int] = None
 
-    def deserialize(self) -> "RadicleGittensorSynapse":
+    def deserialize(self) -> "RadicleSubnetSynapse":
         # Basic deserialization, can be extended.
         return self
 
