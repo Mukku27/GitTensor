@@ -1,151 +1,215 @@
+# The MIT License (MIT)
+# Copyright © 2023 Yuma Rao
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+# the Software.
+
+# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+# DEALINGS IN THE SOFTWARE.
+
 import time
+import torch
 import asyncio
 import threading
 import traceback
-import pexpect 
+
 import bittensor as bt
+
 from gittensor.base.neuron import BaseNeuron
-from gittensor.utils.radicle_utils import RadicleUtils
+
 
 class BaseMinerNeuron(BaseNeuron):
-    """ Base class for GitTensor Miners. """
+    """
+    Base class for Bittensor miners.
+    """
 
     def __init__(self, config=None):
         super().__init__(config=config)
-        self.radicle_utils = RadicleUtils(config=self.config, logging=bt.logging)
 
-        if not self.config.miner.get('blacklist', {}).get('force_validator_permit', False):
+        # Warn if allowing incoming requests from anyone.
+        if not self.config.blacklist.force_validator_permit:
             bt.logging.warning(
-                "Miner is allowing non-validators to send requests. This is potentially a misconfiguration or a security risk depending on the subnet's design."
+                "You are allowing non-validators to send requests to your miner. This is a security risk."
             )
-        if self.config.miner.get('blacklist', {}).get('allow_non_registered', False):
+        if self.config.blacklist.allow_non_registered:
             bt.logging.warning(
-                "Miner is allowing non-registered entities to send requests. This is a security risk."
+                "You are allowing non-registered entities to send requests to your miner. This is a security risk."
             )
 
+        # The axon handles request processing, allowing validators to send this miner requests.
         self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
+
+        # Attach determiners which functions are called when servicing a request.
+        bt.logging.info(f"Attaching forward function to miner axon.")
+        self.axon.attach(
+            forward_fn=self.forward,
+            blacklist_fn=self.blacklist,
+            priority_fn=self.priority,
+        )
         bt.logging.info(f"Axon created: {self.axon}")
 
+        # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
 
-        self.radicle_node_process: pexpect.spawn = None # Type hint for clarity
-        self.radicle_utils.setup_radicle_dependencies()
-        self.radicle_utils.ensure_radicle_auth_and_config(is_miner=True)
-        self.start_radicle_node()
+    def run(self):
+        """
+        Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
 
+        This function performs the following primary tasks:
+        1. Check for registration on the Bittensor network.
+        2. Starts the miner's axon, making it active on the network.
+        3. Periodically resynchronizes with the chain; updating the metagraph with the latest network state and setting weights.
 
-    def start_radicle_node(self):
-        bt.logging.info("Attempting to start Radicle seed node...")
-        success, status_stdout, _ = self.radicle_utils.run_rad_command("rad node status", suppress_error=True)
-        if success and "running" in status_stdout.lower() and "offline" not in status_stdout.lower():
-            bt.logging.info("Radicle node appears to be already running.")
-            return
+        The miner continues its operations until `should_exit` is set to True or an external interruption occurs.
+        During each epoch of its operation, the miner waits for new blocks on the Bittensor network, updates its
+        knowledge of the network (metagraph), and sets its weights. This process ensures the miner remains active
+        and up-to-date with the network's latest state.
 
-        try:
-            command = "rad node start"
-            passphrase = self.config.radicle.get("passphrase", "<YOUR_RADICAL_PASSPHRASE>")
-            if passphrase == "<YOUR_RADICAL_PASSPHRASE>":
-                 bt.logging.warning("Using default placeholder for Radicle passphrase. Set --radicle.passphrase or RADICLE_PASSPHRASE env var.")
+        Note:
+            - The function leverages the global configurations set during the initialization of the miner.
+            - The miner's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
 
-            self.radicle_node_process = self.radicle_utils.start_radicle_node_with_pexpect(command, passphrase)
-            if self.radicle_node_process and self.radicle_node_process.isalive():
-                bt.logging.info(f"Radicle node process started via pexpect (PID: {self.radicle_node_process.pid}).")
-                time.sleep(5) 
-            else:
-                bt.logging.error("Radicle node process failed to start or is not alive after pexpect attempt.")
-                self.radicle_node_process = None
-        except Exception as e:
-            bt.logging.error(f"Failed to start Radicle node: {e}\n{traceback.format_exc()}")
-            self.radicle_node_process = None
+        Raises:
+            KeyboardInterrupt: If the miner is stopped by a manual interruption.
+            Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
+        """
 
+        # Check that miner is registered on the network.
+        self.sync()
 
-    def _log_radicle_node_output_placeholder(self):
-        if self.radicle_node_process and self.radicle_node_process.isalive():
-            try:
-                # This is a very basic, potentially blocking way to read.
-                # A more robust solution would use async reads or select.
-                # For pexpect, it's often better to check `child.before` after an `expect` call.
-                # Since `rad node start` usually daemonizes or outputs and exits (if already running),
-                # continuous reading might not be the primary way to interact with it.
-                # However, if it runs in foreground with pexpect, this could be useful.
-                # For now, this is a placeholder.
-                # output = self.radicle_node_process.read_nonblocking(size=1024, timeout=0.1)
-                # if output:
-                #    bt.logging.debug(f"[RadicleNode STDOUT/ERR] {output.strip()}")
-                pass 
-            except Exception as e:
-                bt.logging.trace(f"Error reading from radicle node process (placeholder log): {e}")
-
-
-    def base_run(self):
-        self.sync() 
-        bt.logging.info(f"Serving axon on port {self.config.axon.port} with netuid {self.config.netuid}")
+        # Serve passes the axon information to the network + netuid we are hosting on.
+        # This will auto-update if the axon port of external ip have changed.
+        bt.logging.info(
+            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
+        )
         self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
-        bt.logging.info(f"Starting axon")
-        self.axon.start()
-        bt.logging.info(f"Miner {self.uid} starting at block: {self.current_block}")
 
+        # Start  starts the miner's axon, making it active on the network.
+        self.axon.start()
+
+        bt.logging.info(f"Miner starting at block: {self.block}")
+
+        # This loop maintains the miner's operations until intentionally stopped.
         try:
             while not self.should_exit:
-                if self.radicle_node_process is None or not self.radicle_node_process.isalive():
-                    # If `rad node start` daemonizes, `isalive()` might be false even if the node is running.
-                    # A better check is `rad node status`.
-                    status_ok, status_out, _ = self.radicle_utils.run_rad_command("rad node status", suppress_error=True)
-                    if not (status_ok and "running" in status_out.lower() and "offline" not in status_out.lower()):
-                        bt.logging.warning("Radicle node process seems not running. Attempting to restart...")
-                        self.start_radicle_node()
-                
-                if self.step % 30 == 0: 
-                    self._log_radicle_node_output_placeholder()
+                while (
+                    self.block - self.metagraph.last_update[self.uid]
+                    < self.config.neuron.epoch_length
+                ):
+                    # Wait before checking again.
+                    time.sleep(1)
 
-                # Sync metagraph and potentially other chain state.
+                    # Check if we should exit.
+                    if self.should_exit:
+                        break
+
+                # Sync metagraph and potentially set weights.
                 self.sync()
-                
                 self.step += 1
-                time.sleep(self.config.miner.get('loop_interval', 12)) # Sleep for a short duration
 
+        # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
+            self.axon.stop()
             bt.logging.success("Miner killed by keyboard interrupt.")
-        except Exception as e:
-            bt.logging.error(f"Error in miner run loop: {traceback.format_exc()}")
-        finally:
-            if self.axon: self.axon.stop()
-            if self.radicle_node_process and self.radicle_node_process.isalive():
-                bt.logging.info("Stopping Radicle node process via pexpect child...")
-                try:
-                    self.radicle_node_process.close(force=True) # Close pexpect child
-                except Exception as e_close:
-                    bt.logging.error(f"Error closing pexpect child for Radicle node: {e_close}")
-            # Ensure the Radicle node is stopped if it was started by this miner
-            # This might require a `rad node stop` command if pexpect didn't manage it as a foreground process.
-            # For now, relying on the process termination or manual stop.
-            bt.logging.info("Exiting miner.")
+            exit()
 
+        # In case of unforeseen errors, the miner will log the error and continue operations.
+        except Exception as e:
+            bt.logging.error(traceback.format_exc())
 
     def run_in_background_thread(self):
+        """
+        Starts the miner's operations in a separate background thread.
+        This is useful for non-blocking operations.
+        """
         if not self.is_running:
             bt.logging.debug("Starting miner in background thread.")
             self.should_exit = False
-            self.thread = threading.Thread(target=self.base_run, daemon=True)
+            self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
             self.is_running = True
-            bt.logging.debug("Miner started in background.")
+            bt.logging.debug("Started")
 
     def stop_run_thread(self):
+        """
+        Stops the miner's operations that are running in the background thread.
+        """
         if self.is_running:
-            bt.logging.debug("Stopping miner background thread.")
+            bt.logging.debug("Stopping miner in background thread.")
             self.should_exit = True
-            if self.thread.is_alive():
-                self.thread.join(timeout=10) # Wait for thread to finish
+            self.thread.join(5)
             self.is_running = False
-            bt.logging.debug("Miner background thread stopped.")
+            bt.logging.debug("Stopped")
 
     def __enter__(self):
+        """
+        Starts the miner's operations in a background thread upon entering the context.
+        This method facilitates the use of the miner in a 'with' statement.
+        """
         self.run_in_background_thread()
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback_obj):
+    def __exit__(self, exc_type, exc_value, traceback):
+        """
+        Stops the miner's background operations upon exiting the context.
+        This method facilitates the use of the miner in a 'with' statement.
+
+        Args:
+            exc_type: The type of the exception that caused the context to be exited.
+                      None if the context was exited without an exception.
+            exc_value: The instance of the exception that caused the context to be exited.
+                       None if the context was exited without an exception.
+            traceback: A traceback object encoding the stack trace.
+                       None if the context was exited without an exception.
+        """
         self.stop_run_thread()
+
+    def set_weights(self):
+        """
+        Self-assigns a weight of 1 to the current miner (identified by its UID) and
+        a weight of 0 to all other peers in the network. The weights determine the trust level the miner assigns to other nodes on the network.
+
+        Raises:
+            Exception: If there's an error while setting weights, the exception is logged for diagnosis.
+        """
+        try:
+            # --- query the chain for the most current number of peers on the network
+            chain_weights = torch.zeros(
+                self.subtensor.subnetwork_n(netuid=self.metagraph.netuid)
+            )
+            chain_weights[self.uid] = 1
+
+            # --- Set weights.
+            self.subtensor.set_weights(
+                wallet=self.wallet,
+                netuid=self.metagraph.netuid,
+                uids=torch.arange(0, len(chain_weights)),
+                weights=chain_weights.to("cpu"),
+                wait_for_inclusion=False,
+                version_key=self.spec_version,
+            )
+
+        except Exception as e:
+            bt.logging.error(
+                f"Failed to set weights on chain with exception: { e }"
+            )
+
+        bt.logging.info(f"Set weights: {chain_weights}")
+
+    def resync_metagraph(self):
+        """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
+        bt.logging.info("resync_metagraph()")
+
+        # Sync the metagraph.
+        self.metagraph.sync(subtensor=self.subtensor)
