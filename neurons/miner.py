@@ -12,7 +12,7 @@ import json
 import pexpect
 import shlex
 
-# Import from captionize project structure
+# Import from gittensor project structure
 from gittensor.base.miner import BaseMinerNeuron
 from gittensor.protocol import RadicleSubnetSynapse # Use the new Radicle synapse
 
@@ -69,6 +69,19 @@ class Miner(BaseMinerNeuron):
             default=None, 
             help="Publicly reachable address for the Radicle node (domain:port or ip:port). If None, Radicle tries to use local discovery.",
         )
+        parser.add_argument(
+            '--axon.port', 
+            type=int, 
+            help='Port to bind axon to',
+            default=8091
+        )
+        parser.add_argument(
+            '--axon.external_ip',
+            type=str,
+            help='External IP for axon. If not set, will attempt to detect automatically.',
+            default=None
+        )
+        
 
         
         
