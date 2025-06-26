@@ -14,7 +14,7 @@ import subprocess
 import shutil
 from typing import Optional, Tuple, List
 
-# Import from captionize project structure
+# Import from gittensor project structure
 from gittensor.base.validator import BaseValidatorNeuron
 from gittensor.protocol import RadicleSubnetSynapse # Use the new Radicle synapse
 from gittensor.utils import  uids as uid_utils # Import new rad_utils and existing uids util
