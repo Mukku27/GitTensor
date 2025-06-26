@@ -23,11 +23,11 @@ import bittensor as bt
 
 from neurons.validator import Validator 
 
-from captionize.protocol import CaptionSynapse
-from captionize.validator.forward import forward
-from captionize.utils.uids import get_random_uids
-from captionize.validator.reward import get_rewards
-from captionize.base.validator import BaseValidatorNeuron
+from gittensor.protocol import CaptionSynapse
+from gittensor.validator.forward import forward
+from gittensor.utils.uids import get_random_uids
+from gittensor.validator.reward import get_rewards
+from gittensor.base.validator import BaseValidatorNeuron
 
 
 class TemplateValidatorNeuronTestCase(unittest.TestCase):

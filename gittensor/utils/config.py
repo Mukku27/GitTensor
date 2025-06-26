@@ -183,14 +183,14 @@ def add_args(cls, parser):
         parser.add_argument(
             "--wandb.project_name",
             type=str,
-            default="captionize-validator",
+            default="gittensor-validator",
             help="Wandb project to log to.",
         )
 
         parser.add_argument(
             "--wandb.entity",
             type=str,
-            default="captionize",
+            default="gittensor",
             help="Wandb entity to log to.",
         )
 
@@ -221,3 +221,5 @@ def config(cls):
     bt.axon.add_args(parser)
     cls.add_args(parser)
     return bt.config(parser)
+
+
