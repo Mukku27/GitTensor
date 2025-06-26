@@ -1,6 +1,6 @@
-
 import bittensor as bt
 from typing import Optional, List 
+import pydantic
 
 
 class RadicleSubnetSynapse(bt.Synapse):
@@ -30,7 +30,11 @@ class RadicleSubnetSynapse(bt.Synapse):
     miner_radicle_node_id: Optional[str] = None
     miner_radicle_node_alias: Optional[str] = None
     is_miner_radicle_node_running: Optional[bool] = None
-    seeded_rids_count: Optional[int] = None
+    seeded_rids_count: Optional[int] = pydantic.Field(
+        default=0,
+        description="Number of RIDs currently being seeded by this miner",
+        validator=lambda v: int(v) if isinstance(v, str) else v
+    )
 
     def deserialize(self) -> "RadicleSubnetSynapse":
         # Basic deserialization, can be extended.
@@ -56,4 +60,3 @@ class RadicleSubnetSynapse(bt.Synapse):
                 m.update(str(value).encode('utf-8'))
         return m.hexdigest()
 
-    
